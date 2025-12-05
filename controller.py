@@ -31,4 +31,21 @@ while True:
     #decode packet into redeable text
     packet_info = data.decode(errors = "ignore")
 
-    click.secho("")
+    click.secho("\n[PACKET_IN]", fg = 'white')
+    click.secho(f"packet_info", fg = 'blue')
+
+    #very simple logic:
+    #if destination unknown ➡️ flood
+    #otherwise ➡️ foreward
+
+    if "unknown" in packet_info.lower():
+        decision = "FLOOD"
+    else:
+        decision = "FOREWARD"
+
+    #send decision back to switch
+    conn.send(decision.encode())
+
+#close connection when done
+conn.close()
+controller_socket.close()
