@@ -215,47 +215,59 @@ class VantaController:
         5. Send SET_CONFIG
         """
         try:
+            self.log(">>> Waiting for HELLO from switch...", "HAND")
+            
+            # Set timeout so we don't hang forever
+            sock.settimeout(10.0)
+            
             # Step 1: Receive HELLO
             header = self.recv_exact(sock, 8)
             if not header:
+                self.log("!!! Failed to receive HELLO - connection closed", "ERROR")
                 return None
             
             version, msg_type, length, xid = struct.unpack('!BBHI', header)
             
+            self.log(f">>> Received message: type={msg_type}, length={length}, version={version}", "HAND")
+            
             if msg_type != OFPT_HELLO:
-                self.log(f"Expected HELLO, got {msg_type}", "WARN")
+                self.log(f"!!! Expected HELLO (0), got message type {msg_type}", "ERROR")
                 return None
             
-            self.log(f"Received HELLO (OpenFlow v{version})", "HAND")
+            self.log(f"✓ Received HELLO (OpenFlow v{version})", "HAND")
             
             # Step 2: Send HELLO reply (use version 1.0 for compatibility)
             hello_msg = struct.pack('!BBHI', OFP_VERSION_1_0, OFPT_HELLO, 8, 1)
             sock.send(hello_msg)
-            self.log("Sent HELLO reply", "HAND")
+            self.log("✓ Sent HELLO reply", "HAND")
             
             # Step 3: Send FEATURES_REQUEST
             features_req = struct.pack('!BBHI', OFP_VERSION_1_0, OFPT_FEATURES_REQUEST, 8, 2)
             sock.send(features_req)
-            self.log("Sent FEATURES_REQUEST", "HAND")
+            self.log("✓ Sent FEATURES_REQUEST", "HAND")
             
             # Step 4: Receive FEATURES_REPLY
+            self.log(">>> Waiting for FEATURES_REPLY...", "HAND")
             header = self.recv_exact(sock, 8)
             if not header:
+                self.log("!!! Failed to receive FEATURES_REPLY - connection closed", "ERROR")
                 return None
             
             version, msg_type, length, xid = struct.unpack('!BBHI', header)
+            self.log(f">>> Received message: type={msg_type}, length={length}", "HAND")
             
             if msg_type != OFPT_FEATURES_REPLY:
-                self.log(f"Expected FEATURES_REPLY, got {msg_type}", "WARN")
+                self.log(f"!!! Expected FEATURES_REPLY (6), got {msg_type}", "ERROR")
                 return None
             
             body = self.recv_exact(sock, length - 8)
             if not body or len(body) < 24:
+                self.log(f"!!! FEATURES_REPLY body too short: {len(body) if body else 0} bytes", "ERROR")
                 return None
             
             # Extract datapath ID (switch unique identifier)
             dpid = struct.unpack('!Q', body[0:8])[0]
-            self.log(f"Switch DPID: {dpid:016x}", "HAND")
+            self.log(f"✓ Switch DPID: {dpid:016x}", "HAND")
             
             # Step 5: Send SET_CONFIG (send full packets to controller)
             config_msg = struct.pack('!BBHIHH', 
@@ -263,7 +275,8 @@ class VantaController:
                                     0,  # flags
                                     0xffff)  # miss_send_len (send full packet)
             sock.send(config_msg)
-            self.log("Sent SET_CONFIG", "HAND")
+            self.log("✓ Sent SET_CONFIG", "HAND")
+            self.log(f"✓✓✓ HANDSHAKE COMPLETE - Switch {dpid:016x} ready! ✓✓✓", "HAND")
             
             return dpid
             
