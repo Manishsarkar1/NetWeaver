@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-VANTA SDN CONTROLLER - Network Morphing Defense System
-A complete OpenFlow 1.0/1.3 SDN controller built from scratch
+VANTA SDN CONTROLLER - Network Morphing Defense System (OpenFlow 1.3)
+A complete OpenFlow 1.3 SDN controller built from scratch
 No frameworks - pure Python socket programming
 """
 
@@ -15,50 +15,71 @@ from collections import defaultdict
 from datetime import datetime
 
 # ============================================================================
-# PHASE 1: OpenFlow Protocol Constants & Message Structures
+# OpenFlow 1.3 Protocol Constants & Message Structures
 # ============================================================================
 
-# OpenFlow versions
-OFP_VERSION_1_0 = 0x01
-OFP_VERSION_1_3 = 0x04
+# OpenFlow version
+OFP_VERSION = 0x04  # OpenFlow 1.3
 
 # OpenFlow message types
 OFPT_HELLO = 0
 OFPT_ERROR = 1
 OFPT_ECHO_REQUEST = 2
 OFPT_ECHO_REPLY = 3
+OFPT_EXPERIMENTER = 4
 OFPT_FEATURES_REQUEST = 5
 OFPT_FEATURES_REPLY = 6
 OFPT_GET_CONFIG_REQUEST = 7
 OFPT_GET_CONFIG_REPLY = 8
 OFPT_SET_CONFIG = 9
 OFPT_PACKET_IN = 10
-OFPT_FLOW_MOD = 14
+OFPT_FLOW_REMOVED = 11
+OFPT_PORT_STATUS = 12
 OFPT_PACKET_OUT = 13
+OFPT_FLOW_MOD = 14
+OFPT_GROUP_MOD = 15
+OFPT_PORT_MOD = 16
+OFPT_TABLE_MOD = 17
 
 # Flow mod commands
 OFPFC_ADD = 0
 OFPFC_MODIFY = 1
-OFPFC_DELETE = 2
+OFPFC_MODIFY_STRICT = 2
+OFPFC_DELETE = 3
+OFPFC_DELETE_STRICT = 4
 
-# Packet out/in buffer
+# Packet in reasons
+OFPR_NO_MATCH = 0
+OFPR_ACTION = 1
+OFPR_INVALID_TTL = 2
+
+# Port numbers (OpenFlow 1.3)
+OFPP_MAX = 0xffffff00
+OFPP_IN_PORT = 0xfffffff8
+OFPP_TABLE = 0xfffffff9
+OFPP_NORMAL = 0xfffffffa
+OFPP_FLOOD = 0xfffffffb
+OFPP_ALL = 0xfffffffc
+OFPP_CONTROLLER = 0xfffffffd
+OFPP_LOCAL = 0xfffffffe
+OFPP_ANY = 0xffffffff
+
+# Buffer IDs
 OFP_NO_BUFFER = 0xffffffff
 
-# Port numbers
-OFPP_FLOOD = 0xfffb
-OFPP_CONTROLLER = 0xfffd
+# Match types
+OFPMT_OXM = 1  # OpenFlow Extensible Match
 
-# Flow mod flags
-OFPFF_SEND_FLOW_REM = 1 << 0
+# OXM (OpenFlow Extensible Match) Classes
+OFPXMC_OPENFLOW_BASIC = 0x8000
 
-# Match wildcards (OpenFlow 1.0)
-OFPFW_IN_PORT = 1 << 0
-OFPFW_DL_SRC = 1 << 2
-OFPFW_DL_DST = 1 << 3
-OFPFW_DL_TYPE = 1 << 4
-OFPFW_NW_PROTO = 1 << 5
-OFPFW_NW_SRC_MASK = 0x3f << 8
-OFPFW_NW_DST_MASK = 0x3f << 14
+# OXM Field Types (OpenFlow Basic)
+OFPXMT_OFB_IN_PORT = 0
+OFPXMT_OFB_ETH_DST = 3
+OFPXMT_OFB_ETH_SRC = 4
+OFPXMT_OFB_ETH_TYPE = 5
+OFPXMT_OFB_IPV4_SRC = 11
+OFPXMT_OFB_IPV4_DST = 12
 
 # Ethernet types
 ETH_TYPE_IP = 0x0800
@@ -68,19 +89,41 @@ ETH_TYPE_ARP = 0x0806
 IP_PROTO_TCP = 6
 IP_PROTO_UDP = 17
 
+# Instruction types (OpenFlow 1.3)
+OFPIT_GOTO_TABLE = 1
+OFPIT_WRITE_METADATA = 2
+OFPIT_WRITE_ACTIONS = 3
+OFPIT_APPLY_ACTIONS = 4
+OFPIT_CLEAR_ACTIONS = 5
+
 # Action types
 OFPAT_OUTPUT = 0
-OFPAT_SET_NW_SRC = 6  # Set source IP
-OFPAT_SET_NW_DST = 7  # Set destination IP
+OFPAT_COPY_TTL_OUT = 11
+OFPAT_COPY_TTL_IN = 12
+OFPAT_SET_MPLS_TTL = 15
+OFPAT_DEC_MPLS_TTL = 16
+OFPAT_PUSH_VLAN = 17
+OFPAT_POP_VLAN = 18
+OFPAT_PUSH_MPLS = 19
+OFPAT_POP_MPLS = 20
+OFPAT_SET_QUEUE = 21
+OFPAT_GROUP = 22
+OFPAT_SET_NW_TTL = 23
+OFPAT_DEC_NW_TTL = 24
+OFPAT_SET_FIELD = 25
+
+# Flow mod flags
+OFPFF_SEND_FLOW_REM = 1 << 0
+OFPFF_CHECK_OVERLAP = 1 << 1
 
 
 # ============================================================================
-# PHASE 1: Core Controller Class - TCP Server & OpenFlow Handshake
+# Core Controller Class - OpenFlow 1.3 Implementation
 # ============================================================================
 
 class VantaController:
     """
-    Main SDN Controller implementing network morphing defense
+    Main SDN Controller implementing network morphing defense with OpenFlow 1.3
     """
     
     def __init__(self, host='0.0.0.0', port=6633):
@@ -90,19 +133,19 @@ class VantaController:
         self.switches = {}  # datapath_id -> socket
         self.running = False
         
-        # PHASE 2: Learning switch tables
+        # Learning switch tables
         self.mac_to_port = {}  # dpid -> {mac -> port}
         
-        # PHASE 4: Network morphing state
+        # Network morphing state
         self.real_to_virtual = {}  # Real IP -> Virtual IP
         self.virtual_to_real = {}  # Virtual IP -> Real IP
         self.morph_counter = 0
         self.last_morph_time = time.time()
         self.morph_interval = 10  # seconds
         
-        # PHASE 5: Attack detection
-        self.packet_stats = defaultdict(lambda: defaultdict(int))  # src_ip -> {dst_port -> count}
-        self.arp_stats = defaultdict(int)  # src_mac -> count
+        # Attack detection
+        self.packet_stats = defaultdict(lambda: defaultdict(int))
+        self.arp_stats = defaultdict(int)
         self.attack_detected = False
         self.honeypot_ip = "10.0.0.99"
         
@@ -122,7 +165,7 @@ class VantaController:
     def start(self):
         """Start the controller TCP server"""
         self.log("=" * 70, "SYS")
-        self.log("VANTA SDN CONTROLLER - Network Morphing Defense System", "SYS")
+        self.log("VANTA SDN CONTROLLER - OpenFlow 1.3 Edition", "SYS")
         self.log("=" * 70, "SYS")
         
         # Create TCP socket
@@ -132,7 +175,7 @@ class VantaController:
         self.server_socket.listen(5)
         self.running = True
         
-        self.log(f"Controller listening on {self.host}:{self.port}", "SYS")
+        self.log(f"Controller listening on {self.host}:{self.port} (OpenFlow 1.3)", "SYS")
         
         # Start background threads
         threading.Thread(target=self.network_morpher, daemon=True).start()
@@ -195,120 +238,248 @@ class VantaController:
         """Receive exact number of bytes"""
         data = b''
         while len(data) < length:
-            chunk = sock.recv(length - len(data))
-            if not chunk:
+            try:
+                chunk = sock.recv(length - len(data))
+                if not chunk:
+                    return None
+                data += chunk
+            except socket.timeout:
+                self.log(f"recv timeout", "DEBUG")
                 return None
-            data += chunk
+            except Exception as e:
+                self.log(f"recv error: {e}", "DEBUG")
+                return None
         return data
     
     # ========================================================================
-    # PHASE 1: OpenFlow Handshake Implementation
+    # OpenFlow 1.3 Handshake Implementation
     # ========================================================================
     
     def openflow_handshake(self, sock):
         """
-        Perform OpenFlow handshake with switch:
-        1. Receive HELLO from switch
-        2. Send HELLO reply
-        3. Send FEATURES_REQUEST
-        4. Receive FEATURES_REPLY
-        5. Send SET_CONFIG
+        Perform OpenFlow 1.3 handshake with switch
         """
         try:
-            self.log(">>> Waiting for HELLO from switch...", "HAND")
-            
-            # Set timeout so we don't hang forever
+            self.log(">>> Starting OpenFlow 1.3 handshake...", "HAND")
             sock.settimeout(10.0)
             
-            # Step 1: Receive HELLO
+            # Step 1: Receive HELLO from switch
             header = self.recv_exact(sock, 8)
             if not header:
-                self.log("!!! Failed to receive HELLO - connection closed", "ERROR")
+                self.log("!!! Failed to receive HELLO", "ERROR")
                 return None
             
             version, msg_type, length, xid = struct.unpack('!BBHI', header)
+            self.log(f">>> Received message: type={msg_type}, length={length}, version=0x{version:02x}", "HAND")
             
-            self.log(f">>> Received message: type={msg_type}, length={length}, version={version}", "HAND")
+            # Read any HELLO body (version bitmaps in OF1.3)
+            if length > 8:
+                hello_body = self.recv_exact(sock, length - 8)
             
             if msg_type != OFPT_HELLO:
-                self.log(f"!!! Expected HELLO (0), got message type {msg_type}", "ERROR")
+                self.log(f"!!! Expected HELLO, got type {msg_type}", "ERROR")
                 return None
             
-            self.log(f"✓ Received HELLO (OpenFlow v{version})", "HAND")
+            self.log(f"✓ Received HELLO from switch (version 0x{version:02x})", "HAND")
             
-            # Step 2: Send HELLO reply (use version 1.0 for compatibility)
-            hello_msg = struct.pack('!BBHI', OFP_VERSION_1_0, OFPT_HELLO, 8, 1)
+            # Step 2: Send HELLO reply (OpenFlow 1.3)
+            hello_msg = struct.pack('!BBHI', OFP_VERSION, OFPT_HELLO, 8, 1)
             sock.send(hello_msg)
-            self.log("✓ Sent HELLO reply", "HAND")
+            self.log("✓ Sent HELLO reply (OpenFlow 1.3)", "HAND")
             
             # Step 3: Send FEATURES_REQUEST
-            features_req = struct.pack('!BBHI', OFP_VERSION_1_0, OFPT_FEATURES_REQUEST, 8, 2)
+            features_req = struct.pack('!BBHI', OFP_VERSION, OFPT_FEATURES_REQUEST, 8, 2)
             sock.send(features_req)
             self.log("✓ Sent FEATURES_REQUEST", "HAND")
             
             # Step 4: Receive FEATURES_REPLY
-            self.log(">>> Waiting for FEATURES_REPLY...", "HAND")
             header = self.recv_exact(sock, 8)
             if not header:
-                self.log("!!! Failed to receive FEATURES_REPLY - connection closed", "ERROR")
+                self.log("!!! Failed to receive FEATURES_REPLY", "ERROR")
                 return None
             
             version, msg_type, length, xid = struct.unpack('!BBHI', header)
             self.log(f">>> Received message: type={msg_type}, length={length}", "HAND")
             
             if msg_type != OFPT_FEATURES_REPLY:
-                self.log(f"!!! Expected FEATURES_REPLY (6), got {msg_type}", "ERROR")
+                self.log(f"!!! Expected FEATURES_REPLY, got {msg_type}", "ERROR")
                 return None
             
             body = self.recv_exact(sock, length - 8)
             if not body or len(body) < 24:
-                self.log(f"!!! FEATURES_REPLY body too short: {len(body) if body else 0} bytes", "ERROR")
+                self.log(f"!!! FEATURES_REPLY body too short", "ERROR")
                 return None
             
-            # Extract datapath ID (switch unique identifier)
-            dpid = struct.unpack('!Q', body[0:8])[0]
-            self.log(f"✓ Switch DPID: {dpid:016x}", "HAND")
+            # Extract datapath ID (OpenFlow 1.3 structure)
+            dpid, n_buffers, n_tables, aux_id, pad = struct.unpack('!QIBBB', body[0:16])
+            capabilities, reserved = struct.unpack('!II', body[16:24])
             
-            # Step 5: Send SET_CONFIG (send full packets to controller)
+            self.log(f"✓ Switch DPID: {dpid:016x}", "HAND")
+            self.log(f"  Buffers: {n_buffers}, Tables: {n_tables}, Capabilities: 0x{capabilities:08x}", "HAND")
+            
+            # Step 5: Send SET_CONFIG
             config_msg = struct.pack('!BBHIHH', 
-                                    OFP_VERSION_1_0, OFPT_SET_CONFIG, 12, 3,
+                                    OFP_VERSION, OFPT_SET_CONFIG, 12, 3,
                                     0,  # flags
                                     0xffff)  # miss_send_len (send full packet)
             sock.send(config_msg)
             self.log("✓ Sent SET_CONFIG", "HAND")
-            self.log(f"✓✓✓ HANDSHAKE COMPLETE - Switch {dpid:016x} ready! ✓✓✓", "HAND")
             
+            # Step 6: Install table-miss flow entry (OpenFlow 1.3 requirement)
+            self.install_table_miss_flow(sock)
+            
+            self.log(f"✓✓✓ HANDSHAKE COMPLETE - Switch {dpid:016x} ready! ✓✓✓", "HAND")
             return dpid
             
         except Exception as e:
             self.log(f"Handshake error: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
             return None
+    
+    def install_table_miss_flow(self, sock):
+        """
+        Install table-miss flow entry (required in OpenFlow 1.3)
+        This catches all unmatched packets and sends them to controller
+        """
+        try:
+            # Match: empty (matches all packets)
+            match = self.build_match_ofp13([])
+            
+            # Instruction: APPLY_ACTIONS with OUTPUT to CONTROLLER
+            action = struct.pack('!HHIHH6x',
+                                OFPAT_OUTPUT,  # type
+                                16,            # len
+                                OFPP_CONTROLLER,  # port
+                                0xffff,        # max_len (send full packet)
+                                0)             # padding
+            
+            instruction = struct.pack('!HH',
+                                     OFPIT_APPLY_ACTIONS,  # type
+                                     8 + len(action))       # len
+            instruction += action
+            
+            # Build FLOW_MOD
+            flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, 0, 4)  # length filled later
+            flow_mod += struct.pack('!QQQBBHHHHHHBBH',
+                                   0,  # cookie
+                                   0,  # cookie_mask
+                                   0,  # table_id (table 0)
+                                   OFPFC_ADD,  # command
+                                   0,  # idle_timeout (permanent)
+                                   0,  # hard_timeout (permanent)
+                                   0,  # priority (lowest)
+                                   OFP_NO_BUFFER,  # buffer_id
+                                   OFPP_ANY,  # out_port
+                                   0,  # out_group (OFPG_ANY)
+                                   0,  # flags
+                                   0, 0)  # padding
+            flow_mod += match
+            flow_mod += instruction
+            
+            # Update length
+            flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, len(flow_mod), 4) + flow_mod[8:]
+            
+            sock.send(flow_mod)
+            self.log("✓ Installed table-miss flow entry", "FLOW")
+            
+        except Exception as e:
+            self.log(f"Failed to install table-miss flow: {e}", "ERROR")
     
     def handle_echo_request(self, sock, xid):
         """Respond to echo requests (keepalive)"""
-        echo_reply = struct.pack('!BBHI', OFP_VERSION_1_0, OFPT_ECHO_REPLY, 8, xid)
+        echo_reply = struct.pack('!BBHI', OFP_VERSION, OFPT_ECHO_REPLY, 8, xid)
         sock.send(echo_reply)
     
     # ========================================================================
-    # PHASE 2: Packet-In Handler - Learning Switch Logic
+    # OpenFlow 1.3 Match Builder
+    # ========================================================================
+    
+    def build_match_ofp13(self, match_fields):
+        """
+        Build OpenFlow 1.3 OXM match structure
+        match_fields: list of (field_type, value) tuples
+        """
+        oxm_fields = b''
+        
+        for field_type, value in match_fields:
+            if field_type == 'in_port':
+                # IN_PORT: 4 bytes
+                oxm_fields += struct.pack('!HBB', 
+                                         OFPXMC_OPENFLOW_BASIC << 7 | OFPXMT_OFB_IN_PORT,
+                                         4,  # length
+                                         0)  # no mask
+                oxm_fields += struct.pack('!I', value)
+                
+            elif field_type == 'eth_dst':
+                # ETH_DST: 6 bytes
+                oxm_fields += struct.pack('!HBB',
+                                         OFPXMC_OPENFLOW_BASIC << 7 | OFPXMT_OFB_ETH_DST,
+                                         6,
+                                         0)
+                oxm_fields += value  # 6-byte MAC address
+                
+            elif field_type == 'eth_src':
+                # ETH_SRC: 6 bytes
+                oxm_fields += struct.pack('!HBB',
+                                         OFPXMC_OPENFLOW_BASIC << 7 | OFPXMT_OFB_ETH_SRC,
+                                         6,
+                                         0)
+                oxm_fields += value
+                
+            elif field_type == 'eth_type':
+                # ETH_TYPE: 2 bytes
+                oxm_fields += struct.pack('!HBB',
+                                         OFPXMC_OPENFLOW_BASIC << 7 | OFPXMT_OFB_ETH_TYPE,
+                                         2,
+                                         0)
+                oxm_fields += struct.pack('!H', value)
+        
+        # Build match header
+        match_len = 4 + len(oxm_fields)
+        padding_len = (8 - (match_len % 8)) % 8  # Align to 8 bytes
+        
+        match = struct.pack('!HH',
+                           OFPMT_OXM,  # type
+                           match_len)   # length
+        match += oxm_fields
+        match += b'\x00' * padding_len
+        
+        return match
+    
+    # ========================================================================
+    # Packet-In Handler - Learning Switch Logic
     # ========================================================================
     
     def handle_packet_in(self, sock, dpid, body, xid):
         """
-        Handle incoming packets from switch:
-        1. Parse packet metadata and Ethernet frame
-        2. Learn source MAC -> port mapping
-        3. Determine output action based on destination MAC
+        Handle OpenFlow 1.3 PACKET_IN messages
         """
         try:
             self.total_packets += 1
             
-            # Parse OpenFlow 1.0 Packet-In structure
-            if len(body) < 18:
+            # Parse OpenFlow 1.3 Packet-In structure
+            if len(body) < 24:
                 return
             
-            buffer_id, total_len, in_port, reason = struct.unpack('!IHBB', body[0:8])
-            ethernet_frame = body[10:]  # Skip padding
+            buffer_id, total_len, reason, table_id = struct.unpack('!IHBB', body[0:8])
+            cookie = struct.unpack('!Q', body[8:16])[0]
+            
+            # Parse match (variable length)
+            match_type, match_len = struct.unpack('!HH', body[16:20])
+            match_data = body[20:20+match_len-4]  # -4 for header
+            
+            # Parse in_port from match
+            in_port = self.parse_in_port_from_match(match_data)
+            if in_port is None:
+                in_port = 1  # Default
+            
+            # Find start of Ethernet frame (after match + padding)
+            match_end = 16 + match_len
+            padding = (8 - (match_len % 8)) % 8
+            eth_start = match_end + padding + 2  # +2 for padding field
+            
+            ethernet_frame = body[eth_start:]
             
             if len(ethernet_frame) < 14:
                 return
@@ -321,12 +492,12 @@ class VantaController:
             dst_mac_str = ':'.join(f'{b:02x}' for b in dst_mac)
             src_mac_str = ':'.join(f'{b:02x}' for b in src_mac)
             
-            # PHASE 2: Learn the source MAC address
+            # Learn the source MAC address
             if src_mac_str not in self.mac_to_port[dpid]:
                 self.mac_to_port[dpid][src_mac_str] = in_port
                 self.log(f"Learned: {src_mac_str} -> Port {in_port}", "LEARN")
             
-            # PHASE 5: Attack detection
+            # Attack detection
             if eth_type == ETH_TYPE_ARP:
                 self.detect_arp_flood(src_mac_str)
             elif eth_type == ETH_TYPE_IP and len(ethernet_frame) >= 34:
@@ -336,61 +507,93 @@ class VantaController:
             out_port = self.mac_to_port[dpid].get(dst_mac_str)
             
             if out_port is not None:
-                # PHASE 3: Destination known - install flow rule
-                self.install_flow(sock, dpid, in_port, out_port, 
-                                src_mac, dst_mac, eth_type, buffer_id, xid)
+                # Destination known - install flow rule
+                self.install_flow_ofp13(sock, dpid, in_port, out_port, 
+                                       src_mac, dst_mac, eth_type, buffer_id, xid)
             else:
-                # PHASE 3: Destination unknown - flood packet
-                self.flood_packet(sock, in_port, buffer_id, ethernet_frame, xid)
+                # Destination unknown - flood packet
+                self.flood_packet_ofp13(sock, in_port, buffer_id, ethernet_frame, xid)
                 
         except Exception as e:
             self.log(f"Packet-In error: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+    
+    def parse_in_port_from_match(self, match_data):
+        """Extract in_port from OXM match data"""
+        try:
+            offset = 0
+            while offset < len(match_data):
+                if offset + 4 > len(match_data):
+                    break
+                    
+                oxm_header = struct.unpack('!I', match_data[offset:offset+4])[0]
+                oxm_class = (oxm_header >> 16) & 0xFFFF
+                oxm_field = (oxm_header >> 9) & 0x7F
+                oxm_length = oxm_header & 0xFF
+                
+                if oxm_field == OFPXMT_OFB_IN_PORT and oxm_length == 4:
+                    in_port = struct.unpack('!I', match_data[offset+4:offset+8])[0]
+                    return in_port
+                
+                offset += 4 + oxm_length
+        except:
+            pass
+        return None
     
     # ========================================================================
-    # PHASE 3: Flow Control - Install Rules & Flood Packets
+    # Flow Control - OpenFlow 1.3
     # ========================================================================
     
-    def install_flow(self, sock, dpid, in_port, out_port, src_mac, dst_mac, 
-                    eth_type, buffer_id, xid):
+    def install_flow_ofp13(self, sock, dpid, in_port, out_port, src_mac, dst_mac, 
+                          eth_type, buffer_id, xid):
         """
-        Install a flow rule in the switch to forward packets
-        without controller involvement
+        Install a flow rule using OpenFlow 1.3
         """
         try:
-            # Build match structure (OpenFlow 1.0)
-            wildcards = (OFPFW_DL_TYPE | OFPFW_NW_PROTO)  # Match on src/dst MAC and in_port
-            
-            match = struct.pack('!IHHBBH',
-                               wildcards,  # wildcards
-                               in_port,    # in_port
-                               0, 0, 0, 0)  # padding
-            
-            match += src_mac  # dl_src (6 bytes)
-            match += dst_mac  # dl_dst (6 bytes)
-            match += struct.pack('!H', eth_type)  # dl_type
-            match += struct.pack('!8xIIHHI', 0, 0, 0, 0, 0)  # padding and other fields
+            # Build match
+            match_fields = [
+                ('in_port', in_port),
+                ('eth_src', src_mac),
+                ('eth_dst', dst_mac),
+                ('eth_type', eth_type)
+            ]
+            match = self.build_match_ofp13(match_fields)
             
             # Build action: OUTPUT to specific port
-            action = struct.pack('!HHH', 
-                                OFPAT_OUTPUT,  # type
-                                8,            # len
-                                out_port)     # port
+            action = struct.pack('!HHIHH6x',
+                                OFPAT_OUTPUT,
+                                16,
+                                out_port,
+                                0xffff,  # max_len
+                                0)       # padding
+            
+            # Build instruction: APPLY_ACTIONS
+            instruction = struct.pack('!HH',
+                                     OFPIT_APPLY_ACTIONS,
+                                     8 + len(action))
+            instruction += action
             
             # Build FLOW_MOD message
-            flow_mod = struct.pack('!BBHI', OFP_VERSION_1_0, OFPT_FLOW_MOD, 
-                                  72 + len(action), xid)
-            flow_mod += match  # 40 bytes
-            flow_mod += struct.pack('!QHHIHBBH',
+            flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, 0, xid)
+            flow_mod += struct.pack('!QQQBBHHHHHHBBH',
                                    0,  # cookie
+                                   0,  # cookie_mask
+                                   0,  # table_id
                                    OFPFC_ADD,  # command
                                    10,  # idle_timeout
                                    30,  # hard_timeout
                                    100,  # priority
                                    buffer_id,  # buffer_id
-                                   OFPP_FLOOD,  # out_port
+                                   OFPP_ANY,  # out_port
+                                   0,  # out_group
                                    OFPFF_SEND_FLOW_REM,  # flags
-                                   )
-            flow_mod += action
+                                   0, 0)  # padding
+            flow_mod += match
+            flow_mod += instruction
+            
+            # Update length
+            flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, len(flow_mod), xid) + flow_mod[8:]
             
             sock.send(flow_mod)
             self.flow_count += 1
@@ -401,39 +604,35 @@ class VantaController:
             
         except Exception as e:
             self.log(f"Flow install error: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
     
-    def flood_packet(self, sock, in_port, buffer_id, packet_data, xid):
+    def flood_packet_ofp13(self, sock, in_port, buffer_id, packet_data, xid):
         """
-        Flood packet to all ports (except input port)
-        Used when destination is unknown
+        Flood packet using OpenFlow 1.3 PACKET_OUT
         """
         try:
             # Build action: OUTPUT to FLOOD
-            action = struct.pack('!HHH',
+            action = struct.pack('!HHIHH6x',
                                 OFPAT_OUTPUT,
-                                8,
-                                OFPP_FLOOD)
+                                16,
+                                OFPP_FLOOD,
+                                0xffff,
+                                0)
             
             # Build PACKET_OUT message
-            if buffer_id != OFP_NO_BUFFER:
-                # Packet is buffered in switch
-                packet_out = struct.pack('!BBHI', OFP_VERSION_1_0, OFPT_PACKET_OUT,
-                                        8 + 8 + len(action), xid)
-                packet_out += struct.pack('!IHH',
-                                         buffer_id,
-                                         in_port,
-                                         len(action))
-                packet_out += action
-            else:
-                # Send full packet
-                packet_out = struct.pack('!BBHI', OFP_VERSION_1_0, OFPT_PACKET_OUT,
-                                        8 + 8 + len(action) + len(packet_data), xid)
-                packet_out += struct.pack('!IHH',
-                                         OFP_NO_BUFFER,
-                                         in_port,
-                                         len(action))
-                packet_out += action
+            packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT, 0, xid)
+            packet_out += struct.pack('!IIH6x',
+                                     buffer_id,
+                                     in_port,
+                                     len(action))  # actions_len
+            packet_out += action
+            
+            if buffer_id == OFP_NO_BUFFER:
                 packet_out += packet_data
+            
+            # Update length
+            packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT, len(packet_out), xid) + packet_out[8:]
             
             sock.send(packet_out)
             self.log(f"Packet flooded from port {in_port}", "FLOOD")
@@ -442,20 +641,18 @@ class VantaController:
             self.log(f"Flood error: {e}", "ERROR")
     
     # ========================================================================
-    # PHASE 4: Network Morphing - Virtual IP Management
+    # Network Morphing - Virtual IP Management
     # ========================================================================
     
     def network_morpher(self):
         """
         Background thread that morphs the network topology
-        by changing virtual IP addresses every N seconds
         """
         self.log("Network morpher started", "MORPH")
         
         while self.running:
             time.sleep(1)
             
-            # Check if it's time to morph or if attack detected
             should_morph = (time.time() - self.last_morph_time >= self.morph_interval)
             
             if self.attack_detected:
@@ -475,8 +672,6 @@ class VantaController:
         self.log("=" * 70, "MORPH")
         self.log(f"NETWORK MORPH #{self.morph_counter} - Reconfiguring topology", "MORPH")
         
-        # Generate new virtual IPs for known hosts
-        # In a real scenario, these would be hosts discovered via ARP/DHCP
         real_ips = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
         
         old_mappings = self.real_to_virtual.copy()
@@ -484,7 +679,6 @@ class VantaController:
         self.virtual_to_real.clear()
         
         for real_ip in real_ips:
-            # Generate random virtual IP in 192.168.x.x range
             virtual_ip = f"192.168.{random.randint(1, 254)}.{random.randint(1, 254)}"
             self.real_to_virtual[real_ip] = virtual_ip
             self.virtual_to_real[virtual_ip] = real_ip
@@ -492,74 +686,57 @@ class VantaController:
             old_vip = old_mappings.get(real_ip, "none")
             self.log(f"  {real_ip} -> {virtual_ip} (was {old_vip})", "MORPH")
         
-        # In production, we'd push flow rules to rewrite packet headers
-        # For now, we log the topology change
         self.log(f"Morph complete - {len(self.real_to_virtual)} hosts remapped", "MORPH")
         self.log("=" * 70, "MORPH")
     
     # ========================================================================
-    # PHASE 5: Attack Detection
+    # Attack Detection
     # ========================================================================
     
     def detect_port_scan(self, ethernet_frame):
-        """
-        Detect port scanning behavior:
-        - Many different destination ports from same source
-        """
+        """Detect port scanning behavior"""
         try:
             if len(ethernet_frame) < 34:
                 return
             
-            # Extract IP header
             ip_header = ethernet_frame[14:34]
             src_ip = socket.inet_ntoa(ip_header[12:16])
-            dst_ip = socket.inet_ntoa(ip_header[16:20])
             protocol = ip_header[9]
             
-            # Check TCP/UDP
             if protocol in [IP_PROTO_TCP, IP_PROTO_UDP] and len(ethernet_frame) >= 38:
-                # Extract destination port
                 dst_port = struct.unpack('!H', ethernet_frame[36:38])[0]
-                
-                # Track port access patterns
                 self.packet_stats[src_ip][dst_port] += 1
                 
-                # Trigger if accessing many different ports
                 if len(self.packet_stats[src_ip]) > 10:
                     self.log(f"PORT SCAN DETECTED from {src_ip} ({len(self.packet_stats[src_ip])} ports)", "ATTACK")
                     self.attack_detected = True
                     self.packet_stats[src_ip].clear()
                     
         except Exception as e:
-            pass  # Silently ignore parsing errors
+            pass
     
     def detect_arp_flood(self, src_mac):
-        """
-        Detect ARP flooding attacks
-        """
+        """Detect ARP flooding attacks"""
         self.arp_stats[src_mac] += 1
         
-        # Trigger if too many ARPs from same source
         if self.arp_stats[src_mac] > 50:
             self.log(f"ARP FLOOD DETECTED from {src_mac} ({self.arp_stats[src_mac]} requests)", "ATTACK")
             self.attack_detected = True
             self.arp_stats[src_mac] = 0
     
     # ========================================================================
-    # PHASE 6: Dashboard - Live Statistics Display
+    # Dashboard - Live Statistics Display
     # ========================================================================
     
     def dashboard(self):
-        """
-        Live terminal dashboard showing controller statistics
-        """
-        time.sleep(2)  # Let controller initialize
+        """Live terminal dashboard"""
+        time.sleep(2)
         
         while self.running:
             time.sleep(5)
             
             print("\n" + "=" * 70)
-            print("VANTA CONTROLLER DASHBOARD".center(70))
+            print("VANTA CONTROLLER DASHBOARD (OpenFlow 1.3)".center(70))
             print("=" * 70)
             print(f"Active Switches      : {len(self.switches)}")
             print(f"Total Packets        : {self.total_packets}")
@@ -600,4 +777,6 @@ if __name__ == "__main__":
         controller.stop()
     except Exception as e:
         print(f"Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
         controller.stop()
