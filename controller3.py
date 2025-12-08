@@ -403,6 +403,9 @@ class VantaController:
             # Step 6: Install table-miss flow entry (OpenFlow 1.3 requirement)
             self.install_table_miss_flow(sock)
             
+            # Step 7: Also install a simple flood-all rule as backup
+            self.install_flood_all_rule(sock)
+            
             self.log(f"✓✓✓ HANDSHAKE COMPLETE - Switch {dpid:016x} ready! ✓✓✓", "HAND")
             return dpid
             
@@ -418,6 +421,8 @@ class VantaController:
         This catches all unmatched packets and sends them to controller
         """
         try:
+            self.log("Installing table-miss flow entry...", "FLOW")
+            
             # Match: empty (matches all packets)
             match = self.build_match_ofp13([])
             
@@ -456,10 +461,58 @@ class VantaController:
             flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, len(flow_mod), 4) + flow_mod[8:]
             
             sock.send(flow_mod)
-            self.log("✓ Installed table-miss flow entry", "FLOW")
+            self.log("✓ Table-miss flow entry installed successfully!", "FLOW")
+            self.log(f"  Match: ALL packets, Action: Send to CONTROLLER", "FLOW")
             
         except Exception as e:
-            self.log(f"Failed to install table-miss flow: {e}", "ERROR")
+            self.log(f"✗ Failed to install table-miss flow: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+    
+    def install_flood_all_rule(self, sock):
+        """
+        Install a backup rule that floods all ARP packets
+        This helps with initial connectivity
+        """
+        try:
+            self.log("Installing ARP flood rule as backup...", "FLOW")
+            
+            # Match: ARP packets only
+            match = self.build_match_ofp13([('eth_type', ETH_TYPE_ARP)])
+            
+            # Action: OUTPUT to FLOOD
+            action = struct.pack('!HHIHH6x',
+                                OFPAT_OUTPUT,
+                                16,
+                                OFPP_FLOOD,
+                                0xffff,
+                                0)
+            
+            instruction = struct.pack('!HH',
+                                     OFPIT_APPLY_ACTIONS,
+                                     8 + len(action))
+            instruction += action
+            
+            # Build FLOW_MOD with priority 10 (higher than table-miss)
+            flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, 0, 5)
+            flow_mod += struct.pack('!QQQBBHHHHHHBBH',
+                                   0, 0, 0,
+                                   OFPFC_ADD,
+                                   0, 0,
+                                   10,  # priority (higher than table-miss)
+                                   OFP_NO_BUFFER,
+                                   OFPP_ANY, 0, 0,
+                                   0, 0)
+            flow_mod += match
+            flow_mod += instruction
+            
+            flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, len(flow_mod), 5) + flow_mod[8:]
+            
+            sock.send(flow_mod)
+            self.log("✓ ARP flood rule installed", "FLOW")
+            
+        except Exception as e:
+            self.log(f"Failed to install ARP flood rule: {e}", "WARN")
     
     def handle_echo_request(self, sock, xid):
         """Respond to echo requests (keepalive)"""
