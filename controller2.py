@@ -282,10 +282,12 @@ class VantaController:
             
             self.log(f"✓ Received HELLO from switch (version 0x{version:02x})", "HAND")
             
-            # Step 2: Send HELLO reply (OpenFlow 1.3)
-            hello_msg = struct.pack('!BBHI', OFP_VERSION, OFPT_HELLO, 8, 1)
+            # Step 2: Send HELLO reply (use OpenFlow 1.3 - widely supported)
+            # Even if switch supports 1.6, we'll negotiate down to 1.3
+            reply_version = OFP_VERSION  # Always use 1.3 (0x04)
+            hello_msg = struct.pack('!BBHI', reply_version, OFPT_HELLO, 8, 1)
             sock.send(hello_msg)
-            self.log("✓ Sent HELLO reply (OpenFlow 1.3)", "HAND")
+            self.log(f"✓ Sent HELLO reply (OpenFlow 1.3 - negotiating down from 0x{version:02x})", "HAND")
             
             # Step 3: Send FEATURES_REQUEST
             features_req = struct.pack('!BBHI', OFP_VERSION, OFPT_FEATURES_REQUEST, 8, 2)
@@ -306,13 +308,28 @@ class VantaController:
                 return None
             
             body = self.recv_exact(sock, length - 8)
-            if not body or len(body) < 24:
-                self.log(f"!!! FEATURES_REPLY body too short", "ERROR")
+            if not body or len(body) < 8:
+                self.log(f"!!! FEATURES_REPLY body too short: {len(body) if body else 0} bytes", "ERROR")
                 return None
             
-            # Extract datapath ID (OpenFlow 1.3 structure)
-            dpid, n_buffers, n_tables, aux_id, pad = struct.unpack('!QIBBB', body[0:16])
-            capabilities, reserved = struct.unpack('!II', body[16:24])
+            # Extract datapath ID (first 8 bytes - consistent across OF versions)
+            dpid = struct.unpack('!Q', body[0:8])[0]
+            
+            # Parse remaining fields based on available data
+            n_buffers = 256  # default
+            n_tables = 254   # default
+            capabilities = 0 # default
+            
+            if len(body) >= 12:
+                n_buffers = struct.unpack('!I', body[8:12])[0]
+            if len(body) >= 13:
+                n_tables = struct.unpack('!B', body[12:13])[0]
+            if len(body) >= 24:
+                # OpenFlow 1.3+ structure
+                try:
+                    capabilities = struct.unpack('!I', body[16:20])[0]
+                except:
+                    pass
             
             self.log(f"✓ Switch DPID: {dpid:016x}", "HAND")
             self.log(f"  Buffers: {n_buffers}, Tables: {n_tables}, Capabilities: 0x{capabilities:08x}", "HAND")
