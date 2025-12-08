@@ -299,10 +299,11 @@ class VantaController:
             try:
                 chunk = sock.recv(length - len(data))
                 if not chunk:
+                    # Connection closed
                     return None
                 data += chunk
             except socket.timeout:
-                self.log(f"recv timeout", "DEBUG")
+                self.log(f"recv timeout after {len(data)}/{length} bytes", "DEBUG")
                 return None
             except Exception as e:
                 self.log(f"recv error: {e}", "DEBUG")
@@ -319,12 +320,17 @@ class VantaController:
         """
         try:
             self.log(">>> Starting OpenFlow 1.3 handshake...", "HAND")
-            sock.settimeout(10.0)
+            sock.settimeout(30.0)  # Increase timeout to 30 seconds
             
             # Step 1: Receive HELLO from switch
+            self.log(">>> Waiting for HELLO...", "HAND")
             header = self.recv_exact(sock, 8)
             if not header:
-                self.log("!!! Failed to receive HELLO", "ERROR")
+                self.log("!!! Failed to receive HELLO - connection closed", "ERROR")
+                return None
+            
+            if len(header) < 8:
+                self.log(f"!!! Incomplete HELLO header: got {len(header)} bytes, need 8", "ERROR")
                 return None
             
             version, msg_type, length, xid = struct.unpack('!BBHI', header)
