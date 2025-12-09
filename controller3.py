@@ -447,21 +447,19 @@ class VantaController:
             
             # Build FLOW_MOD
             flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, 0, 4)  # length filled later
-            flow_mod += struct.pack('!QQBBBHHIHHI2x',
-                                   0,  # cookie (8 bytes Q)
-                                   0,  # cookie_mask (8 bytes Q)
-                                   0,  # table_id (1 byte B)
-                                   OFPFC_ADD,  # command (1 byte B)
-                                   0,  # auxiliary_id (1 byte B)
-                                   0,  # pad (2 bytes H)
-                                   0,  # idle_timeout (2 bytes H)
-                                   0,  # hard_timeout (2 bytes H)
-                                   0,  # priority (2 bytes H)
-                                   OFP_NO_BUFFER,  # buffer_id (4 bytes I)
-                                   OFPP_ANY,  # out_port (4 bytes I)
-                                   0,  # out_group (4 bytes I)
-                                   0)  # flags (2 bytes H)
-                                   # 2x = 2 bytes padding
+            flow_mod += struct.pack('!QQBBHHHIIIH2x',
+                0,         # cookie
+                0,         # cookie_mask
+                0,         # table_id (0 = table 0)
+                0,         # command (0 = add)
+                0,         # idle_timeout
+                0,         # hard_timeout
+                0,         # priority (0 for table-miss)
+                0xffffffff,# buffer_id (no buffer)
+                0xffffffff,# out_port (any)
+                0xffffffff,# out_group (any)
+                0          # flags
+                )
             flow_mod += match
             flow_mod += instruction
             
