@@ -378,7 +378,7 @@ class VantaController:
             
             # Build FLOW_MOD
             flow_mod = struct.pack('!BBHI', OFP_VERSION, OFPT_FLOW_MOD, 0, 4)  # length filled later
-             += struct.pack('!QQQBBHHHHHHBBH',
+            += struct.pack('!QQQBBHHHHHHBBH',
                                    0,  # cookie
                                    0,  # cookie_mask
                                    0,  # table_id (table 0)
