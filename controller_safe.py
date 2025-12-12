@@ -256,12 +256,6 @@ class VantaController:
         dpid = None
         
         try:
-            self.log(f"=== NEW CONNECTION from {address} ===", "CONN")
-            
-            # Set socket options
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.setblocking(True)
-            
             # Perform OpenFlow handshake
             dpid = self.openflow_handshake(sock)
             if dpid:
@@ -303,29 +297,16 @@ class VantaController:
         data = b''
         while len(data) < length:
             try:
-                # Try to peek at available data first
-                try:
-                    ready = select.select([sock], [], [], 0.1)
-                    if not ready[0]:
-                        self.log(f"No data available yet (got {len(data)}/{length} bytes)", "DEBUG")
-                        continue
-                except:
-                    pass
-                
                 chunk = sock.recv(length - len(data))
                 if not chunk:
                     # Connection closed
-                    self.log(f"Connection closed after {len(data)}/{length} bytes", "ERROR")
-                    if len(data) > 0:
-                        self.log(f"Partial data received: {data.hex()}", "DEBUG")
                     return None
                 data += chunk
-                self.log(f"Received {len(chunk)} bytes (total: {len(data)}/{length})", "DEBUG")
             except socket.timeout:
-                self.log(f"Socket timeout after {len(data)}/{length} bytes", "ERROR")
+                self.log(f"recv timeout after {len(data)}/{length} bytes", "DEBUG")
                 return None
             except Exception as e:
-                self.log(f"recv error after {len(data)}/{length} bytes: {e}", "ERROR")
+                self.log(f"recv error: {e}", "DEBUG")
                 return None
         return data
     
@@ -341,14 +322,8 @@ class VantaController:
             self.log(">>> Starting OpenFlow 1.3 handshake...", "HAND")
             sock.settimeout(30.0)  # Increase timeout to 30 seconds
             
-            # SEND HELLO FIRST (some switches expect controller to initiate)
-            self.log(">>> Sending HELLO to switch...", "HAND")
-            hello_msg = struct.pack('!BBHI', OFP_VERSION, OFPT_HELLO, 8, 1)
-            sock.send(hello_msg)
-            self.log("✓ Sent HELLO", "HAND")
-            
             # Step 1: Receive HELLO from switch
-            self.log(">>> Waiting for HELLO reply...", "HAND")
+            self.log(">>> Waiting for HELLO...", "HAND")
             header = self.recv_exact(sock, 8)
             if not header:
                 self.log("!!! Failed to receive HELLO - connection closed", "ERROR")
@@ -371,8 +346,12 @@ class VantaController:
             
             self.log(f"✓ Received HELLO from switch (version 0x{version:02x})", "HAND")
             
-            # Step 2: Don't send another HELLO (we already did)
-            # Just proceed to FEATURES_REQUEST
+            # Step 2: Send HELLO reply (use OpenFlow 1.3 - widely supported)
+            # Even if switch supports 1.6, we'll negotiate down to 1.3
+            reply_version = OFP_VERSION  # Always use 1.3 (0x04)
+            hello_msg = struct.pack('!BBHI', reply_version, OFPT_HELLO, 8, 1)
+            sock.send(hello_msg)
+            self.log(f"✓ Sent HELLO reply (OpenFlow 1.3 - negotiating down from 0x{version:02x})", "HAND")
             
             # Step 3: Send FEATURES_REQUEST
             features_req = struct.pack('!BBHI', OFP_VERSION, OFPT_FEATURES_REQUEST, 8, 2)
