@@ -204,15 +204,13 @@ class OFConnection(asyncio.Protocol):
             # Parse datapath_id from features reply: ofp_switch_features
             # dpid is first 8 bytes
             if len(payload) >= 24:
-                dpid = struct.unpack("!Q", payload[:8])[0]
-                self.dpid = dpid
-                self.dp = DatapathState(dpid)
-                self.controller.datapaths[dpid] = self.dp
-                print(f"[+] Features reply: dpid=0x{dpid:016x}")
-                self.send(pack_set_config(MISS_SEND_LEN, 0))
-                self.send(pack_table_miss_send_to_controller())
+                dpid = struct.unpack("!Q", payload[0:8])[0]
+                n_buffers = struct.unpack("!I", payload[8:12])[0]
+                n_tables = payload[12]
+                aux_id = payload[13]
+                print(f"[DEBUG] dpid={dpid} buffers={n_buffers} tables={n_tables} aux={aux_id}")
             else:
-                print(f"[!] Malformed FEATURES_REPLY, length={len(payload)} raw={payload.hex()}")
+                print(f"[!] FEATURES_REPLY too short: {len(payload)}")
 
         elif msg_type == OFPT_PACKET_IN:
             self.handle_packet_in(payload)
