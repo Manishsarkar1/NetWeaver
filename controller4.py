@@ -209,12 +209,10 @@ class OFConnection(asyncio.Protocol):
                 self.dp = DatapathState(dpid)
                 self.controller.datapaths[dpid] = self.dp
                 print(f"[+] Features reply: dpid=0x{dpid:016x}")
-                # Configure miss_send_len
                 self.send(pack_set_config(MISS_SEND_LEN, 0))
-                # Install table-miss to send to controller
                 self.send(pack_table_miss_send_to_controller())
             else:
-                print("[!] Malformed FEATURES_REPLY")
+                print(f"[!] Malformed FEATURES_REPLY, length={len(payload)} raw={payload.hex()}")
 
         elif msg_type == OFPT_PACKET_IN:
             self.handle_packet_in(payload)
