@@ -1,30 +1,33 @@
 #!/usr/bin/env python3
-import socket
-import struct
-import threading
+import socket, struct, threading
 
-# OpenFlow 1.3
 OFP_VERSION = 0x04
 
-# Message types
 OFPT_HELLO = 0
+OFPT_ECHO_REQUEST = 2
+OFPT_ECHO_REPLY = 3
 OFPT_FEATURES_REQUEST = 5
-OFPT_FEATURES_REPLY = 6
 OFPT_PACKET_IN = 10
 OFPT_PACKET_OUT = 13
 OFPT_FLOW_MOD = 14
 
-# Ports
 OFPP_CONTROLLER = 0xfffffffd
 OFPP_FLOOD = 0xfffffffb
 OFPCML_NO_BUFFER = 0xffff
-
-# Flow commands
 OFPFC_ADD = 0
+
+def recv_exact(sock, n):
+    data = b''
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
 
 class Controller:
     def __init__(self):
-        self.mac_table = {}
+        self.mac = {}
 
     def start(self):
         s = socket.socket()
@@ -44,14 +47,17 @@ class Controller:
             self.install_table_miss(sock)
 
             while True:
-                hdr = sock.recv(8)
+                hdr = recv_exact(sock, 8)
                 if not hdr:
                     break
 
                 ver, mtype, length, xid = struct.unpack('!BBHI', hdr)
-                body = sock.recv(length - 8)
+                body = recv_exact(sock, length - 8)
 
-                if mtype == OFPT_PACKET_IN:
+                if mtype == OFPT_ECHO_REQUEST:
+                    sock.send(struct.pack('!BBHI', OFP_VERSION, OFPT_ECHO_REPLY, 8, xid))
+
+                elif mtype == OFPT_PACKET_IN:
                     self.packet_in(sock, body)
 
         except Exception as e:
@@ -62,81 +68,64 @@ class Controller:
 
     def handshake(self, sock):
         sock.send(struct.pack('!BBHI', OFP_VERSION, OFPT_HELLO, 8, 0))
-        sock.recv(8)
+        recv_exact(sock, 8)
+
         sock.send(struct.pack('!BBHI', OFP_VERSION, OFPT_FEATURES_REQUEST, 8, 1))
-        hdr = sock.recv(8)
+        hdr = recv_exact(sock, 8)
         _, _, length, _ = struct.unpack('!BBHI', hdr)
-        sock.recv(length - 8)
+        recv_exact(sock, length - 8)
+
         print("[OK] Handshake complete")
 
     def install_table_miss(self, sock):
-        # Match (empty)
         match = struct.pack('!HH', 1, 4)
 
-        # Action: output to controller
         action = struct.pack('!HHIH', 0, 16, OFPP_CONTROLLER, OFPCML_NO_BUFFER)
+        instr = struct.pack('!HH', 4, 8 + len(action)) + action
 
-        instruction = struct.pack('!HH', 4, 8 + len(action)) + action
+        length = 8 + 40 + len(match) + len(instr)
 
-        length = 8 + 40 + len(match) + len(instruction)
-
-        flow_mod = struct.pack(
+        flow = struct.pack(
             '!BBHIQQBBHHHIII',
-            OFP_VERSION,
-            OFPT_FLOW_MOD,
-            length,
-            1,
-            0, 0,        # cookie, mask
-            0,           # table
-            OFPFC_ADD,
-            0, 0,        # idle, hard timeout
-            0,           # priority
-            0xffffffff,  # buffer_id
-            0,           # out_port
-            0            # out_group
-        ) + match + instruction
+            OFP_VERSION, OFPT_FLOW_MOD, length, 1,
+            0, 0,
+            0, OFPFC_ADD,
+            0, 0, 0,
+            0xffffffff, 0, 0
+        ) + match + instr
 
-        sock.send(flow_mod)
+        sock.send(flow)
         print("[OK] Table-miss installed")
 
     def packet_in(self, sock, data):
-        in_port = struct.unpack('!I', data[8:12])[0]
-        eth = data[16:]
-        dst = eth[0:6]
-        src = eth[6:12]
-
-        self.mac_table[src] = in_port
-
-        if dst in self.mac_table:
-            out_port = self.mac_table[dst]
-            self.send_packet_out(sock, data, out_port)
-        else:
-            self.send_packet_out(sock, data, OFPP_FLOOD)
-
-    def send_packet_out(self, sock, data, out_port):
         buffer_id = struct.unpack('!I', data[0:4])[0]
+        frame = data[-(len(data) - data.find(b'\xff\xff')):] if b'\xff\xff' in data else data[16:]
+
+        dst = frame[0:6]
+        src = frame[6:12]
+
+        # brute-force in_port extraction (works for OVS)
         in_port = struct.unpack('!I', data[8:12])[0]
-        packet = data[16:]
 
+        self.mac[src] = in_port
+        out = self.mac.get(dst, OFPP_FLOOD)
+
+        self.packet_out(sock, buffer_id, in_port, out, frame)
+
+    def packet_out(self, sock, buffer_id, in_port, out_port, frame):
         action = struct.pack('!HHIH', 0, 16, out_port, 0)
-
-        length = 24 + len(action) + (0 if buffer_id != 0xffffffff else len(packet))
+        length = 24 + len(action) + (0 if buffer_id != 0xffffffff else len(frame))
 
         msg = struct.pack(
             '!BBHI',
-            OFP_VERSION,
-            OFPT_PACKET_OUT,
-            length,
-            0
+            OFP_VERSION, OFPT_PACKET_OUT, length, 0
         ) + struct.pack(
             '!IIH6x',
-            buffer_id,
-            in_port,
-            len(action)
+            buffer_id, in_port, len(action)
         ) + action
 
         if buffer_id == 0xffffffff:
-            msg += packet
+            msg += frame
 
         sock.send(msg)
 
