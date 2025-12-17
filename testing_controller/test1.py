@@ -147,6 +147,17 @@ class SimpleController:
                 dpid = struct.unpack('!Q', body[0:8])[0]
                 print(f"  [OK] Switch DPID: {dpid:016x}")
             
+            # Send SET_CONFIG to receive full packets
+            set_config = struct.pack('!BBHIHH',
+                                    OFP_VERSION,      # version
+                                    9,                # OFPT_SET_CONFIG
+                                    12,               # length
+                                    2,                # xid
+                                    0,                # flags
+                                    0xffff)           # miss_send_len (65535 = full packet)
+            sock.send(set_config)
+            print(f"  [>] Sent SET_CONFIG (miss_send_len=65535)")
+            
             sock.settimeout(None)
             return True
             
