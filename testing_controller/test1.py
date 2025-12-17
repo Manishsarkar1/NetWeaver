@@ -197,6 +197,8 @@ class SimpleController:
                 # Only log non-broadcast floods
                 if dst_mac != "ff:ff:ff:ff:ff:ff":
                     print(f"[FLOOD] Unknown destination {dst_mac}")
+                else:
+                    print(f"[FLOOD-BCAST] Broadcasting from port {in_port}")
                 self.send_packet_out(sock, buffer_id, in_port, OFPP_FLOOD, eth_frame, xid)
                 
         except Exception as e:
@@ -216,6 +218,7 @@ class SimpleController:
                                         8 + 8 + len(action), xid)
                 packet_out += struct.pack('!IHH', buffer_id, in_port, len(action))
                 packet_out += action
+                print(f"[SEND] Using buffered packet {buffer_id}, out_port={out_port}")
             else:
                 # Send full packet
                 packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT,
@@ -223,6 +226,7 @@ class SimpleController:
                 packet_out += struct.pack('!IHH', 0xffffffff, in_port, len(action))
                 packet_out += action
                 packet_out += eth_frame
+                print(f"[SEND] Sending full packet ({len(eth_frame)} bytes), out_port={out_port}")
             
             sock.send(packet_out)
             
