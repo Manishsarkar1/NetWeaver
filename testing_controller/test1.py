@@ -127,6 +127,22 @@ class SimpleController:
             
             print(f"  [<] Received HELLO (OpenFlow {version})")
             
+            # Send SET_CONFIG (OpenFlow 1.0 format)
+            # struct ofp_switch_config: flags (16 bits), miss_send_len (16 bits)
+            set_config = struct.pack('!BBHI',
+                                    OFP_VERSION,           # version = 1
+                                    9,                     # type = OFPT_SET_CONFIG
+                                    12,                    # length = 8 (header) + 4 (body)
+                                    2)                     # xid
+            set_config += struct.pack('!HH',
+                                     0,                    # flags = 0
+                                     0xffff)               # miss_send_len = 65535
+            sock.send(set_config)
+            print(f"  [>] Sent SET_CONFIG (miss_send_len=65535)")
+            
+            # Small delay
+            time.sleep(0.05)
+            
             # Send FEATURES_REQUEST
             feat_req = struct.pack('!BBHI', OFP_VERSION, OFPT_FEATURES_REQUEST, 8, 1)
             sock.send(feat_req)
@@ -146,17 +162,6 @@ class SimpleController:
             if len(body) >= 8:
                 dpid = struct.unpack('!Q', body[0:8])[0]
                 print(f"  [OK] Switch DPID: {dpid:016x}")
-            
-            # Send SET_CONFIG to receive full packets
-            set_config = struct.pack('!BBHIHH',
-                                    OFP_VERSION,      # version
-                                    9,                # OFPT_SET_CONFIG
-                                    12,               # length
-                                    2,                # xid
-                                    0,                # flags
-                                    0xffff)           # miss_send_len (65535 = full packet)
-            sock.send(set_config)
-            print(f"  [>] Sent SET_CONFIG (miss_send_len=65535)")
             
             sock.settimeout(None)
             return True
