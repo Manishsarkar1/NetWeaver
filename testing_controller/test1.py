@@ -179,6 +179,10 @@ class SimpleController:
             src_mac = ':'.join(f'{b:02x}' for b in eth_frame[6:12])   # Bytes 6-11: Source MAC
             eth_type = struct.unpack('!H', eth_frame[12:14])[0]       # Bytes 12-13: EtherType
             
+            # Debug: Show first 20 bytes of packet
+            if eth_type == 0x0806 or eth_type == 0x0800:  # ARP or IP
+                print(f"[DEBUG] First 20 bytes: {eth_frame[:20].hex()}")
+            
             # Learn source MAC
             if src_mac not in self.mac_to_port[switch_addr]:
                 self.mac_to_port[switch_addr][src_mac] = in_port
