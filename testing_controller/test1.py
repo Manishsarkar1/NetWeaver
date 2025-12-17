@@ -154,87 +154,66 @@ class SimpleController:
             print(f"  [X] Handshake error: {e}")
             return False
     
-    def handle_packet_in(self, sock, switch_addr, packet_in_data, xid):
+    def handle_packet_in(self, sock, switch_addr, packet_in_body, xid):
         """Learn MAC addresses and forward intelligently"""
         try:
-            # Parse PACKET_IN
-            if len(packet_in_data) < 20:
+            # Parse PACKET_IN (OpenFlow 1.0 format)
+            if len(packet_in_body) < 20:
+                print(f"[ERROR] Packet-in too short: {len(packet_in_body)} bytes")
                 return
             
-            buffer_id = struct.unpack('!I', packet_in_data[0:4])[0]
-            in_port = struct.unpack('!H', packet_in_data[6:8])[0]
-            eth_frame = packet_in_data[12:]
+            buffer_id = struct.unpack('!I', packet_in_body[0:4])[0]
+            total_len = struct.unpack('!H', packet_in_body[4:6])[0]
+            in_port = struct.unpack('!H', packet_in_body[6:8])[0]
+            reason = struct.unpack('!B', packet_in_body[8:9])[0]
+            
+            # Ethernet frame starts at offset 10 (after 2 bytes padding)
+            eth_frame = packet_in_body[10:]
             
             if len(eth_frame) < 14:
+                print(f"[ERROR] Ethernet frame too short: {len(eth_frame)} bytes")
                 return
             
-            # Parse Ethernet header
-            dst_mac = ':'.join(f'{b:02x}' for b in eth_frame[0:6])
-            src_mac = ':'.join(f'{b:02x}' for b in eth_frame[6:12])
+            # Parse Ethernet header (first 14 bytes)
+            dst_mac = ':'.join(f'{b:02x}' for b in eth_frame[0:6])    # Bytes 0-5: Destination MAC
+            src_mac = ':'.join(f'{b:02x}' for b in eth_frame[6:12])   # Bytes 6-11: Source MAC
+            eth_type = struct.unpack('!H', eth_frame[12:14])[0]       # Bytes 12-13: EtherType
             
             # Learn source MAC
             if src_mac not in self.mac_to_port[switch_addr]:
                 self.mac_to_port[switch_addr][src_mac] = in_port
-                print(f"[LEARN] {src_mac} is on port {in_port}")
+                print(f"[LEARN] {src_mac} is on port {in_port} (EtherType: 0x{eth_type:04x})")
             
             # Determine output port
             if dst_mac in self.mac_to_port[switch_addr]:
                 out_port = self.mac_to_port[switch_addr][dst_mac]
                 print(f"[FORWARD] {src_mac} -> {dst_mac} via port {out_port}")
-                self.send_packet(sock, buffer_id, in_port, out_port, eth_frame, xid)
+                self.send_packet_out(sock, buffer_id, in_port, out_port, eth_frame, xid)
             else:
-                print(f"[FLOOD] Unknown destination {dst_mac}")
-                self.flood_packet(sock, buffer_id, in_port, eth_frame, xid)
+                # Only log non-broadcast floods
+                if dst_mac != "ff:ff:ff:ff:ff:ff":
+                    print(f"[FLOOD] Unknown destination {dst_mac}")
+                self.send_packet_out(sock, buffer_id, in_port, OFPP_FLOOD, eth_frame, xid)
                 
         except Exception as e:
             print(f"[ERROR] Packet-in handling: {e}")
+            import traceback
+            traceback.print_exc()
     
-    def send_packet(self, sock, buffer_id, in_port, out_port, eth_frame, xid):
-        """Send packet to specific port"""
+    def send_packet_out(self, sock, buffer_id, in_port, out_port, eth_frame, xid):
+        """Send PACKET_OUT message"""
         try:
-            # Action: OUTPUT to specific port
-            action = struct.pack('!HHH', 0, 8, out_port)
+            # Action: OUTPUT to port
+            action = struct.pack('!HHH', 0, 8, out_port)  # type=OUTPUT, len=8, port
             
             if buffer_id != 0xffffffff:
+                # Packet is buffered in switch
                 packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT,
-                                        8 + 8 + len(action), xid)
-                packet_out += struct.pack('!IHH', buffer_id, in_port, len(action))
-                packet_out += action
-            else:
-                packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT,
-                                        8 + 8 + len(action) + len(eth_frame), xid)
-                packet_out += struct.pack('!IHH', 0xffffffff, in_port, len(action))
-                packet_out += action
-                packet_out += eth_frame
-            
-            sock.send(packet_out)
-            
-        except Exception as e:
-            print(f"[ERROR] Send packet: {e}")
-    
-    def flood_packet(self, sock, buffer_id, in_port, eth_frame, xid):
-        """Flood packet to all ports"""
-        try:
-            # Parse PACKET_IN (OpenFlow 1.0)
-            if len(packet_in_data) < 12:
-                return
-            
-            buffer_id = struct.unpack('!I', packet_in_data[0:4])[0]
-            in_port = struct.unpack('!H', packet_in_data[6:8])[0]
-            
-            # Build PACKET_OUT
-            # Action: OUTPUT to FLOOD
-            action = struct.pack('!HHH', 0, 8, OFPP_FLOOD)  # type=OUTPUT, len=8, port=FLOOD
-            
-            if buffer_id != 0xffffffff:
-                # Packet is buffered
-                packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT, 
                                         8 + 8 + len(action), xid)
                 packet_out += struct.pack('!IHH', buffer_id, in_port, len(action))
                 packet_out += action
             else:
                 # Send full packet
-                eth_frame = packet_in_data[12:]
                 packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT,
                                         8 + 8 + len(action) + len(eth_frame), xid)
                 packet_out += struct.pack('!IHH', 0xffffffff, in_port, len(action))
@@ -244,7 +223,9 @@ class SimpleController:
             sock.send(packet_out)
             
         except Exception as e:
-            print(f"[ERROR] Flood packet: {e}")
+            print(f"[ERROR] Send packet out: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":
