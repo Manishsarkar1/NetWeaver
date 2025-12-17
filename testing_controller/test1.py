@@ -27,6 +27,7 @@ class SimpleController:
     def __init__(self):
         self.running = False
         self.switches = {}
+        self.mac_to_port = {}  # MAC learning table
         
     def start(self):
         print("=" * 60)
@@ -60,6 +61,7 @@ class SimpleController:
             
             print(f"[SUCCESS] Switch connected from {addr}")
             self.switches[addr] = sock
+            self.mac_to_port[addr] = {}  # Per-switch MAC table
             
             # Handle messages
             while self.running:
@@ -84,9 +86,8 @@ class SimpleController:
                         sock.send(reply)
                         
                     elif msg_type == OFPT_PACKET_IN:
-                        # Flood all packets
-                        self.flood_packet(sock, body, xid)
-                        print("[PACKET] Packet received and flooded")
+                        # Learn and forward
+                        self.handle_packet_in(sock, addr, body, xid)
                         
                 except socket.timeout:
                     continue
@@ -153,7 +154,65 @@ class SimpleController:
             print(f"  [X] Handshake error: {e}")
             return False
     
-    def flood_packet(self, sock, packet_in_data, xid):
+    def handle_packet_in(self, sock, switch_addr, packet_in_data, xid):
+        """Learn MAC addresses and forward intelligently"""
+        try:
+            # Parse PACKET_IN
+            if len(packet_in_data) < 20:
+                return
+            
+            buffer_id = struct.unpack('!I', packet_in_data[0:4])[0]
+            in_port = struct.unpack('!H', packet_in_data[6:8])[0]
+            eth_frame = packet_in_data[12:]
+            
+            if len(eth_frame) < 14:
+                return
+            
+            # Parse Ethernet header
+            dst_mac = ':'.join(f'{b:02x}' for b in eth_frame[0:6])
+            src_mac = ':'.join(f'{b:02x}' for b in eth_frame[6:12])
+            
+            # Learn source MAC
+            if src_mac not in self.mac_to_port[switch_addr]:
+                self.mac_to_port[switch_addr][src_mac] = in_port
+                print(f"[LEARN] {src_mac} is on port {in_port}")
+            
+            # Determine output port
+            if dst_mac in self.mac_to_port[switch_addr]:
+                out_port = self.mac_to_port[switch_addr][dst_mac]
+                print(f"[FORWARD] {src_mac} -> {dst_mac} via port {out_port}")
+                self.send_packet(sock, buffer_id, in_port, out_port, eth_frame, xid)
+            else:
+                print(f"[FLOOD] Unknown destination {dst_mac}")
+                self.flood_packet(sock, buffer_id, in_port, eth_frame, xid)
+                
+        except Exception as e:
+            print(f"[ERROR] Packet-in handling: {e}")
+    
+    def send_packet(self, sock, buffer_id, in_port, out_port, eth_frame, xid):
+        """Send packet to specific port"""
+        try:
+            # Action: OUTPUT to specific port
+            action = struct.pack('!HHH', 0, 8, out_port)
+            
+            if buffer_id != 0xffffffff:
+                packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT,
+                                        8 + 8 + len(action), xid)
+                packet_out += struct.pack('!IHH', buffer_id, in_port, len(action))
+                packet_out += action
+            else:
+                packet_out = struct.pack('!BBHI', OFP_VERSION, OFPT_PACKET_OUT,
+                                        8 + 8 + len(action) + len(eth_frame), xid)
+                packet_out += struct.pack('!IHH', 0xffffffff, in_port, len(action))
+                packet_out += action
+                packet_out += eth_frame
+            
+            sock.send(packet_out)
+            
+        except Exception as e:
+            print(f"[ERROR] Send packet: {e}")
+    
+    def flood_packet(self, sock, buffer_id, in_port, eth_frame, xid):
         """Flood packet to all ports"""
         try:
             # Parse PACKET_IN (OpenFlow 1.0)
