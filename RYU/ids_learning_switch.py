@@ -2,7 +2,7 @@ from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER, set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ipv4, tcp, icmp
+from ryu.lib.packet import packet, ethernet, ipv4, tcp, icmp, arp
 from collections import defaultdict
 import time
 import eventlet
@@ -17,12 +17,11 @@ class PiSwitchIDS(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(PiSwitchIDS, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
-        # MAC learning
         self.mac_to_port = {}
 
-        # IDS DATA
+        # IDS state
         self.icmp_count = defaultdict(int)
         self.icmp_time = defaultdict(float)
 
@@ -35,40 +34,41 @@ class PiSwitchIDS(app_manager.RyuApp):
     # ---------------- SWITCH CONNECT ----------------
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
-        datapath = ev.msg.datapath
-        ofp = datapath.ofproto
-        parser = datapath.ofproto_parser
+        dp = ev.msg.datapath
+        ofp = dp.ofproto
+        parser = dp.ofproto_parser
 
+        # TABLE-MISS
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofp.OFPP_CONTROLLER,
                                           ofp.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 0, match, actions)
+        self.add_flow(dp, 0, match, actions)
 
-        print(Fore.GREEN + f"[✓] Switch {datapath.id} connected")
+        print(Fore.GREEN + f"[✓] Switch {dp.id} connected")
 
 
-    # ---------------- FLOW INSTALL ----------------
-    def add_flow(self, datapath, priority, match, actions):
-        ofp = datapath.ofproto
-        parser = datapath.ofproto_parser
+    def add_flow(self, dp, priority, match, actions):
+        ofp = dp.ofproto
+        parser = dp.ofproto_parser
 
-        inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
-                                             actions)]
-        mod = parser.OFPFlowMod(datapath=datapath,
-                                priority=priority,
-                                match=match,
-                                instructions=inst)
-        datapath.send_msg(mod)
+        inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
+        mod = parser.OFPFlowMod(
+            datapath=dp,
+            priority=priority,
+            match=match,
+            instructions=inst
+        )
+        dp.send_msg(mod)
 
 
     # ---------------- PACKET IN ----------------
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         msg = ev.msg
-        datapath = msg.datapath
-        ofp = datapath.ofproto
-        parser = datapath.ofproto_parser
-        dpid = datapath.id
+        dp = msg.datapath
+        ofp = dp.ofproto
+        parser = dp.ofproto_parser
+        dpid = dp.id
 
         self.mac_to_port.setdefault(dpid, {})
 
@@ -78,12 +78,26 @@ class PiSwitchIDS(app_manager.RyuApp):
         if eth.ethertype == 0x88cc:
             return
 
-        dst = eth.dst
         src = eth.src
+        dst = eth.dst
         in_port = msg.match['in_port']
 
         self.mac_to_port[dpid][src] = in_port
 
+        # ---------------- ARP (MANDATORY) ----------------
+        if pkt.get_protocol(arp.arp):
+            actions = [parser.OFPActionOutput(ofp.OFPP_FLOOD)]
+            out = parser.OFPPacketOut(
+                datapath=dp,
+                buffer_id=msg.buffer_id,
+                in_port=in_port,
+                actions=actions,
+                data=msg.data
+            )
+            dp.send_msg(out)
+            return
+
+        # ---------------- NORMAL L2 FORWARD ----------------
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
         else:
@@ -91,7 +105,7 @@ class PiSwitchIDS(app_manager.RyuApp):
 
         actions = [parser.OFPActionOutput(out_port)]
 
-        # ---------- IDS ----------
+        # ---------------- IDS LOGIC ----------------
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         if ip_pkt:
             src_ip = ip_pkt.src
@@ -103,23 +117,26 @@ class PiSwitchIDS(app_manager.RyuApp):
             if tcp_pkt:
                 self.detect_tcp_scan(dpid, src_ip, tcp_pkt.dst_port)
 
-        # ---------- NORMAL FORWARD ----------
+        # ---------------- FLOW INSTALL ----------------
         if out_port != ofp.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port,
-                                    eth_dst=dst,
-                                    eth_src=src)
-            self.add_flow(datapath, 1, match, actions)
+            match = parser.OFPMatch(
+                in_port=in_port,
+                eth_src=src,
+                eth_dst=dst
+            )
+            self.add_flow(dp, 1, match, actions)
 
-        data = None if msg.buffer_id == ofp.OFP_NO_BUFFER else msg.data
-        out = parser.OFPPacketOut(datapath=datapath,
-                                  buffer_id=msg.buffer_id,
-                                  in_port=in_port,
-                                  actions=actions,
-                                  data=data)
-        datapath.send_msg(out)
+        out = parser.OFPPacketOut(
+            datapath=dp,
+            buffer_id=msg.buffer_id,
+            in_port=in_port,
+            actions=actions,
+            data=msg.data
+        )
+        dp.send_msg(out)
 
 
-    # ---------------- ICMP FLOOD DETECTION ----------------
+    # ---------------- ICMP FLOOD ----------------
     def detect_icmp_flood(self, dpid, src_ip):
         now = time.time()
 
@@ -129,23 +146,23 @@ class PiSwitchIDS(app_manager.RyuApp):
 
         self.icmp_count[src_ip] += 1
 
-        if self.icmp_count[src_ip] >= 15:
+        if self.icmp_count[src_ip] >= 20:
             print(Fore.RED + Style.BRIGHT +
-                  f"[!!!] ICMP_FLOOD detected | src={src_ip} | switch={dpid}")
+                  f"[!!!] ICMP_FLOOD | src={src_ip} | switch={dpid}")
             self.icmp_count[src_ip] = 0
 
 
-    # ---------------- TCP PORT SCAN DETECTION ----------------
+    # ---------------- TCP SCAN ----------------
     def detect_tcp_scan(self, dpid, src_ip, dst_port):
         now = time.time()
 
         if now - self.tcp_time[src_ip] > 5:
-            self.tcp_time[src_ip] = now
             self.tcp_ports[src_ip].clear()
+            self.tcp_time[src_ip] = now
 
         self.tcp_ports[src_ip].add(dst_port)
 
         if len(self.tcp_ports[src_ip]) >= 10:
             print(Fore.MAGENTA + Style.BRIGHT +
-                  f"[!!!] TCP_PORT_SCAN detected | src={src_ip} | switch={dpid}")
+                  f"[!!!] TCP_PORT_SCAN | src={src_ip} | switch={dpid}")
             self.tcp_ports[src_ip].clear()
