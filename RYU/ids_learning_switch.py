@@ -5,58 +5,61 @@ from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ipv4, icmp, tcp
 from collections import defaultdict, deque
 import time
-import threading
 from colorama import Fore, Style, init
 
 init(autoreset=True)
 
 # ================= CONFIG =================
-WINDOW_SIZE = 5          # seconds (sliding window)
-ICMP_THRESHOLD = 40      # packets per window
-TCP_SYN_THRESHOLD = 50
-PORT_SCAN_THRESHOLD = 10
-BLOCK_TIME = 30          # seconds
-DASHBOARD_INTERVAL = 5
-# ==========================================
+WINDOW = 3                 # seconds
+ICMP_THRESHOLD = 20        # packets per window
+TCP_SYN_THRESHOLD = 25
+BLOCK_TIME = 20            # seconds
+# =========================================
 
 
-class PiSwitchIDS(app_manager.RyuApp):
+class IDS_LearningSwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(PiSwitchIDS, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.mac_to_port = defaultdict(dict)
-
-        self.icmp_history = defaultdict(deque)
-        self.tcp_syn_history = defaultdict(deque)
-        self.port_scan_history = defaultdict(set)
-
+        self.icmp_stats = defaultdict(deque)
+        self.syn_stats = defaultdict(deque)
         self.blocked_ips = {}
 
-        print(Fore.CYAN + "[+] Advanced IDS Controller Started")
+        print(Fore.CYAN + Style.BRIGHT +
+              "\n[+] IDS LEARNING SWITCH CONTROLLER STARTED\n")
 
-        threading.Thread(target=self.unblock_daemon, daemon=True).start()
-        threading.Thread(target=self.dashboard, daemon=True).start()
-
-    # ---------- SWITCH SETUP ----------
+    # ---------------------------------------------------------
+    # Switch Connection
+    # ---------------------------------------------------------
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         dp = ev.msg.datapath
         ofp = dp.ofproto
         parser = dp.ofproto_parser
 
-        match = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofp.OFPP_CONTROLLER,
-                                          ofp.OFPCML_NO_BUFFER)]
+        # Table-miss: mirror to controller + normal flooding
+        actions = [
+            parser.OFPActionOutput(ofp.OFPP_CONTROLLER, ofp.OFPCML_NO_BUFFER),
+            parser.OFPActionOutput(ofp.OFPP_FLOOD)
+        ]
+
         inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
 
         dp.send_msg(parser.OFPFlowMod(
-            datapath=dp, priority=0, match=match, instructions=inst))
+            datapath=dp,
+            priority=0,
+            match=parser.OFPMatch(),
+            instructions=inst
+        ))
 
         print(Fore.GREEN + f"[✓] Switch {dp.id} connected")
 
-    # ---------- PACKET HANDLER ----------
+    # ---------------------------------------------------------
+    # Packet Processing
+    # ---------------------------------------------------------
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         msg = ev.msg
@@ -71,107 +74,107 @@ class PiSwitchIDS(app_manager.RyuApp):
         if eth.ethertype == 0x88cc:
             return
 
-        src = eth.src
         dst = eth.dst
+        src = eth.src
         dpid = dp.id
 
         self.mac_to_port[dpid][src] = in_port
 
-        out_port = self.mac_to_port[dpid].get(dst, ofp.OFPP_FLOOD)
+        # Normal learning switch behavior
+        if dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][dst]
+        else:
+            out_port = ofp.OFPP_FLOOD
+
         actions = [parser.OFPActionOutput(out_port)]
 
-        ip_pkt = pkt.get_protocol(ipv4.ipv4)
-        if ip_pkt:
-            src_ip = ip_pkt.src
-
-            if src_ip in self.blocked_ips:
-                return
-
-            self.detect_attacks(pkt, src_ip, dp)
-
+        # Install flow ONLY for non-flood behavior
         if out_port != ofp.OFPP_FLOOD:
-            match = parser.OFPMatch(
-                in_port=in_port, eth_src=src, eth_dst=dst)
             dp.send_msg(parser.OFPFlowMod(
-                datapath=dp, priority=1, match=match,
+                datapath=dp,
+                priority=1,
+                match=parser.OFPMatch(
+                    in_port=in_port,
+                    eth_src=src,
+                    eth_dst=dst
+                ),
                 instructions=[parser.OFPInstructionActions(
-                    ofp.OFPIT_APPLY_ACTIONS, actions)],
-                idle_timeout=60))
+                    ofp.OFPIT_APPLY_ACTIONS, actions)]
+            ))
 
         dp.send_msg(parser.OFPPacketOut(
-            datapath=dp, buffer_id=msg.buffer_id,
-            in_port=in_port, actions=actions, data=msg.data))
+            datapath=dp,
+            buffer_id=ofp.OFP_NO_BUFFER,
+            in_port=in_port,
+            actions=actions,
+            data=msg.data
+        ))
 
-    # ---------- IDS LOGIC ----------
-    def detect_attacks(self, pkt, src_ip, dp):
+        # IDS LOGIC
+        self.inspect_packet(pkt, dp)
+
+    # ---------------------------------------------------------
+    # IDS Logic
+    # ---------------------------------------------------------
+    def inspect_packet(self, pkt, dp):
+        ip = pkt.get_protocol(ipv4.ipv4)
+        if not ip:
+            return
+
+        src_ip = ip.src
         now = time.time()
 
-        icmp_pkt = pkt.get_protocol(icmp.icmp)
-        tcp_pkt = pkt.get_protocol(tcp.tcp)
-
-        # ---- ICMP FLOOD ----
-        if icmp_pkt:
-            self.icmp_history[src_ip].append(now)
-            self.cleanup(self.icmp_history[src_ip], now)
-
-            if len(self.icmp_history[src_ip]) > ICMP_THRESHOLD:
-                self.block(src_ip, dp, "ICMP_FLOOD")
-
-        # ---- TCP ATTACKS ----
-        if tcp_pkt:
-            if tcp_pkt.bits & tcp.TCP_SYN:
-                self.tcp_syn_history[src_ip].append(now)
-                self.cleanup(self.tcp_syn_history[src_ip], now)
-
-                self.port_scan_history[src_ip].add(tcp_pkt.dst_port)
-
-                if len(self.tcp_syn_history[src_ip]) > TCP_SYN_THRESHOLD:
-                    self.block(src_ip, dp, "TCP_SYN_FLOOD")
-
-                if len(self.port_scan_history[src_ip]) > PORT_SCAN_THRESHOLD:
-                    self.block(src_ip, dp, "PORT_SCAN")
-
-    def cleanup(self, dq, now):
-        while dq and now - dq[0] > WINDOW_SIZE:
-            dq.popleft()
-
-    # ---------- BLOCK / UNBLOCK ----------
-    def block(self, src_ip, dp, reason):
         if src_ip in self.blocked_ips:
             return
 
-        ofp = dp.ofproto
+        # -------- ICMP FLOOD --------
+        if pkt.get_protocol(icmp.icmp):
+            self.icmp_stats[src_ip].append(now)
+            self.cleanup(self.icmp_stats[src_ip], now)
+
+            print(Fore.YELLOW +
+                  f"[ICMP] {src_ip} -> {len(self.icmp_stats[src_ip])}")
+
+            if len(self.icmp_stats[src_ip]) > ICMP_THRESHOLD:
+                self.block_ip(src_ip, dp, "ICMP FLOOD")
+
+        # -------- TCP SYN FLOOD --------
+        tcp_pkt = pkt.get_protocol(tcp.tcp)
+        if tcp_pkt and tcp_pkt.bits & tcp.TCP_SYN:
+            self.syn_stats[src_ip].append(now)
+            self.cleanup(self.syn_stats[src_ip], now)
+
+            print(Fore.MAGENTA +
+                  f"[TCP SYN] {src_ip} -> {len(self.syn_stats[src_ip])}")
+
+            if len(self.syn_stats[src_ip]) > TCP_SYN_THRESHOLD:
+                self.block_ip(src_ip, dp, "TCP SYN FLOOD")
+
+    # ---------------------------------------------------------
+    # Helpers
+    # ---------------------------------------------------------
+    def cleanup(self, dq, now):
+        while dq and now - dq[0] > WINDOW:
+            dq.popleft()
+
+    def block_ip(self, ip, dp, reason):
+        if ip in self.blocked_ips:
+            return
+
         parser = dp.ofproto_parser
 
-        match = parser.OFPMatch(eth_type=0x0800, ipv4_src=src_ip)
-
         dp.send_msg(parser.OFPFlowMod(
-            datapath=dp, priority=100, match=match,
-            instructions=[], hard_timeout=BLOCK_TIME))
+            datapath=dp,
+            priority=100,
+            match=parser.OFPMatch(
+                eth_type=0x0800,
+                ipv4_src=ip
+            ),
+            instructions=[],
+            hard_timeout=BLOCK_TIME
+        ))
 
-        self.blocked_ips[src_ip] = {
-            "time": time.time(),
-            "reason": reason,
-            "dp": dp
-        }
+        self.blocked_ips[ip] = time.time()
 
-        print(Fore.RED + f"[🔥 BLOCKED] {src_ip} → {reason}")
-
-    def unblock_daemon(self):
-        while True:
-            now = time.time()
-            for ip in list(self.blocked_ips.keys()):
-                if now - self.blocked_ips[ip]["time"] > BLOCK_TIME:
-                    print(Fore.GREEN + f"[✓ UNBLOCKED] {ip}")
-                    del self.blocked_ips[ip]
-            time.sleep(1)
-
-    # ---------- DASHBOARD ----------
-    def dashboard(self):
-        while True:
-            print(Style.BRIGHT + Fore.YELLOW + "\n===== IDS DASHBOARD =====")
-            print(Fore.CYAN + f"Active Attackers : {len(self.blocked_ips)}")
-            for ip, info in self.blocked_ips.items():
-                print(Fore.RED + f"{ip} → {info['reason']}")
-            print(Fore.YELLOW + "========================\n")
-            time.sleep(DASHBOARD_INTERVAL)
+        print(Style.BRIGHT + Fore.RED +
+              f"\n[🔥 BLOCKED] {ip} | REASON: {reason}\n")
