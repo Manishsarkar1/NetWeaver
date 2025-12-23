@@ -1,177 +1,227 @@
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
+from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER, set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ipv4
+from ryu.lib.packet import packet, ethernet, arp, ipv4
 from ryu.lib import hub
 
 import random
 import time
+from collections import defaultdict
 
-from colorama import Fore, Style, init
-from tabulate import tabulate
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
 
-init(autoreset=True)
+console = Console()
 
-SHUFFLE_INTERVAL = 15  # seconds
-VIRTUAL_NET = "192.168.100."
 
 class MTDIPShuffle(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
+    SHUFFLE_INTERVAL = 30  # seconds
+
     def __init__(self, *args, **kwargs):
-        super(MTDIPShuffle, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
-        self.mac_to_port = {}
-        self.host_db = {}      # real_ip -> data
-        self.virtual_pool = list(range(10, 250))
+        self.mac_to_port = defaultdict(dict)
+        self.datapaths = {}
 
-        self.monitor_thread = hub.spawn(self.ip_shuffle_loop)
+        self.hosts = {}       # real_ip -> {mac, dpid, port}
+        self.vip_map = {}     # real_ip -> virtual_ip
 
-        print(Fore.GREEN + Style.BRIGHT + "\n[✔] MTD IP Shuffle Controller Started\n")
+        self.shuffle_thread = hub.spawn(self._shuffle_loop)
 
-    # ---------- Switch Setup ----------
+        console.print(Panel("[bold green]✔ MTD IP Shuffle Controller Started[/bold green]"))
+
+    # ---------------- Switch Handling ---------------- #
+
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
-        datapath = ev.msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
+        dp = ev.msg.datapath
+        ofp = dp.ofproto
+        parser = dp.ofproto_parser
 
+        self.datapaths[dp.id] = dp
+
+        # Table-miss
         match = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                          ofproto.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 0, match, actions)
+        actions = [parser.OFPActionOutput(ofp.OFPP_CONTROLLER,
+                                          ofp.OFPCML_NO_BUFFER)]
+        self._add_flow(dp, 0, match, actions)
 
-        print(Fore.CYAN + f"[✓] Switch {datapath.id} connected")
+        console.print(f"[cyan][✓] Switch {dp.id} connected[/cyan]")
 
-    def add_flow(self, datapath, priority, match, actions):
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
+    # ---------------- Packet-In ---------------- #
 
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                             actions)]
-
-        mod = parser.OFPFlowMod(
-            datapath=datapath,
-            priority=priority,
-            match=match,
-            instructions=inst
-        )
-        datapath.send_msg(mod)
-
-    # ---------- Packet Handling ----------
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         msg = ev.msg
-        datapath = msg.datapath
-        dpid = datapath.id
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
+        dp = msg.datapath
+        ofp = dp.ofproto
+        parser = dp.ofproto_parser
         in_port = msg.match['in_port']
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
-        ip_pkt = pkt.get_protocol(ipv4.ipv4)
 
-        if eth.ethertype == 0x88cc:
+        if eth.ethertype == 0x0806:  # ARP
+            self._handle_arp(dp, pkt, in_port)
             return
 
-        self.mac_to_port.setdefault(dpid, {})
-        self.mac_to_port[dpid][eth.src] = in_port
+        if eth.ethertype == 0x0800:  # IPv4
+            self._handle_ipv4(dp, pkt, in_port)
 
-        # Learn IP → host
-        if ip_pkt:
-            if ip_pkt.src not in self.host_db:
-                vip = self.allocate_virtual_ip()
-                self.host_db[ip_pkt.src] = {
-                    "vip": vip,
-                    "switch": dpid,
-                    "last_shuffle": time.strftime("%H:%M:%S")
-                }
+    # ---------------- ARP PROXY ---------------- #
 
-        out_port = self.mac_to_port[dpid].get(eth.dst, ofproto.OFPP_FLOOD)
+    def _handle_arp(self, dp, pkt, in_port):
+        arp_pkt = pkt.get_protocol(arp.arp)
 
-        actions = []
+        src_ip = arp_pkt.src_ip
+        dst_ip = arp_pkt.dst_ip
 
-        # --- IP Rewrite ---
-        if ip_pkt:
-            src_vip = self.host_db[ip_pkt.src]["vip"]
-            dst_vip = self.get_real_from_virtual(ip_pkt.dst)
+        # Learn host
+        if src_ip not in self.hosts:
+            self.hosts[src_ip] = {
+                "mac": arp_pkt.src_mac,
+                "dpid": dp.id,
+                "port": in_port
+            }
+            self._assign_vip(src_ip)
 
-            if src_vip:
-                actions.append(parser.OFPActionSetField(ipv4_src=src_vip))
-            if dst_vip:
-                actions.append(parser.OFPActionSetField(ipv4_dst=dst_vip))
+        # Proxy ARP reply
+        if dst_ip in self.hosts:
+            parser = dp.ofproto_parser
+            ofp = dp.ofproto
 
-        actions.append(parser.OFPActionOutput(out_port))
+            arp_reply = packet.Packet()
+            arp_reply.add_protocol(
+                ethernet.ethernet(
+                    dst=arp_pkt.src_mac,
+                    src="aa:bb:cc:dd:ee:ff",
+                    ethertype=0x0806
+                )
+            )
+            arp_reply.add_protocol(
+                arp.arp(
+                    opcode=arp.ARP_REPLY,
+                    src_mac="aa:bb:cc:dd:ee:ff",
+                    src_ip=dst_ip,
+                    dst_mac=arp_pkt.src_mac,
+                    dst_ip=src_ip
+                )
+            )
+            arp_reply.serialize()
+
+            actions = [parser.OFPActionOutput(in_port)]
+            out = parser.OFPPacketOut(
+                datapath=dp,
+                buffer_id=ofp.OFP_NO_BUFFER,
+                in_port=ofp.OFPP_CONTROLLER,
+                actions=actions,
+                data=arp_reply.data
+            )
+            dp.send_msg(out)
+
+    # ---------------- IPv4 HANDLING ---------------- #
+
+    def _handle_ipv4(self, dp, pkt, in_port):
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        src = ip_pkt.src
+        dst = ip_pkt.dst
+
+        if src not in self.hosts:
+            return
+        if dst not in self.hosts:
+            return
+
+        self._install_bidirectional_flows(src, dst)
+
+    # ---------------- FLOW INSTALL ---------------- #
+
+    def _install_bidirectional_flows(self, src, dst):
+        src_vip = self.vip_map[src]
+        dst_vip = self.vip_map[dst]
+
+        src_info = self.hosts[src]
+        dst_info = self.hosts[dst]
+
+        # Ingress rewrite
+        dp = self.datapaths[src_info["dpid"]]
+        parser = dp.ofproto_parser
 
         match = parser.OFPMatch(
-            in_port=in_port,
-            eth_src=eth.src,
-            eth_dst=eth.dst
+            eth_type=0x0800,
+            ipv4_src=src,
+            ipv4_dst=dst
         )
+        actions = [
+            parser.OFPActionSetField(ipv4_src=src_vip),
+            parser.OFPActionSetField(ipv4_dst=dst_vip),
+            parser.OFPActionOutput(dp.ofproto.OFPP_NORMAL)
+        ]
+        self._add_flow(dp, 10, match, actions)
 
-        self.add_flow(datapath, 10, match, actions)
+        # Egress restore
+        dp2 = self.datapaths[dst_info["dpid"]]
+        parser2 = dp2.ofproto_parser
 
-        out = parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=msg.buffer_id,
-            in_port=in_port,
-            actions=actions,
-            data=msg.data
+        match2 = parser2.OFPMatch(
+            eth_type=0x0800,
+            ipv4_src=dst_vip,
+            ipv4_dst=src_vip
         )
-        datapath.send_msg(out)
+        actions2 = [
+            parser2.OFPActionSetField(ipv4_src=dst),
+            parser2.OFPActionSetField(ipv4_dst=src),
+            parser2.OFPActionOutput(dst_info["port"])
+        ]
+        self._add_flow(dp2, 10, match2, actions2)
 
-    # ---------- MTD Logic ----------
-    def allocate_virtual_ip(self):
-        octet = random.choice(self.virtual_pool)
-        self.virtual_pool.remove(octet)
-        return VIRTUAL_NET + str(octet)
+    # ---------------- FLOW UTILS ---------------- #
 
-    def reshuffle_ips(self):
-        for real_ip in self.host_db:
-            self.virtual_pool.append(int(self.host_db[real_ip]["vip"].split(".")[-1]))
-            self.host_db[real_ip]["vip"] = self.allocate_virtual_ip()
-            self.host_db[real_ip]["last_shuffle"] = time.strftime("%H:%M:%S")
+    def _add_flow(self, dp, priority, match, actions):
+        parser = dp.ofproto_parser
+        ofp = dp.ofproto
 
-    def get_real_from_virtual(self, vip):
-        for real, data in self.host_db.items():
-            if data["vip"] == vip:
-                return real
-        return None
+        inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
+        mod = parser.OFPFlowMod(
+            datapath=dp,
+            priority=priority,
+            match=match,
+            instructions=inst
+        )
+        dp.send_msg(mod)
 
-    # ---------- Periodic Shuffle ----------
-    def ip_shuffle_loop(self):
+    # ---------------- IP SHUFFLE ---------------- #
+
+    def _assign_vip(self, real_ip):
+        vip = f"192.168.100.{random.randint(10,250)}"
+        self.vip_map[real_ip] = vip
+        self._print_shuffle(real_ip)
+
+    def _shuffle_loop(self):
         while True:
-            hub.sleep(SHUFFLE_INTERVAL)
-            if not self.host_db:
+            hub.sleep(self.SHUFFLE_INTERVAL)
+            if not self.hosts:
                 continue
 
-            self.reshuffle_ips()
-            self.print_status()
+            console.print("\n[bold yellow]⚡ IP Shuffle Triggered[/bold yellow]")
+            for ip in list(self.vip_map.keys()):
+                self._assign_vip(ip)
 
-    # ---------- Pretty Output ----------
-    def print_status(self):
-        print(Fore.MAGENTA + Style.BRIGHT + "\n╔═══════════════ IP SHUFFLE EVENT ═══════════════╗")
+    # ---------------- OUTPUT ---------------- #
 
-        table = []
-        for real, data in self.host_db.items():
-            table.append([
-                Fore.YELLOW + real,
-                Fore.GREEN + data["vip"],
-                Fore.CYAN + f"SW-{data['switch']}",
-                Fore.WHITE + data["last_shuffle"]
-            ])
+    def _print_shuffle(self, ip):
+        table = Table(title="IP SHUFFLE MAP", show_header=True)
+        table.add_column("REAL IP", style="cyan")
+        table.add_column("VIRTUAL IP", style="green")
+        table.add_column("SWITCH", style="magenta")
 
-        print(tabulate(
-            table,
-            headers=[
-                Fore.RED + "REAL IP",
-                Fore.RED + "VIRTUAL IP",
-                Fore.RED + "SWITCH",
-                Fore.RED + "LAST SHUFFLE"
-            ],
-            tablefmt="fancy_grid"
-        ))
-
-        print(Fore.MAGENTA + Style.BRIGHT + "╚═══════════════════════════════════════════════╝\n")
+        info = self.hosts[ip]
+        table.add_row(
+            ip,
+            self.vip_map[ip],
+            f"SW-{info['dpid']}"
+        )
+        console.print(table)
