@@ -7,14 +7,12 @@ REQUIREMENTS:
     pip install ryu click rich
 
 USAGE:
-    # Phase 0: Baseline learning switch
-    ryu-manager mtd_controller.py --phase=0
+    # Set phase via environment variable
+    export MTD_PHASE=0 && ryu-manager mtd_controller.py
+    export MTD_PHASE=2 && ryu-manager mtd_controller.py
+    export MTD_PHASE=4 && ryu-manager mtd_controller.py
     
-    # Phase 2: IP virtualization
-    ryu-manager mtd_controller.py --phase=2
-    
-    # Phase 4: Full MTD with attack detection
-    ryu-manager mtd_controller.py --phase=4
+    # Or edit PHASE constant in code below
 
 ARCHITECTURE:
     - Stateful flow tracking
@@ -22,6 +20,14 @@ ARCHITECTURE:
     - Safe IP rewriting with reverse flows
     - Attack-triggered dynamic shuffling
 """
+
+import os
+
+# ============================================================================
+# CONFIGURATION - CHANGE THIS TO SWITCH PHASES
+# ============================================================================
+PHASE = int(os.environ.get('MTD_PHASE', 0))  # 0, 1, 2, 3, or 4
+# ============================================================================
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
@@ -442,7 +448,7 @@ class StatefulMTDController(app_manager.RyuApp):
         super(StatefulMTDController, self).__init__(*args, **kwargs)
         
         # Phase configuration
-        self.phase = int(kwargs.get('phase', 0))
+        self.phase = PHASE  # Use global constant
         
         # Components
         self.switches = {}          # dpid -> BaselineLearningSwitch
@@ -597,17 +603,9 @@ class StatefulMTDController(app_manager.RyuApp):
         self.vip.shuffle_vips()
 
 
-# Entry point
-def main():
-    import sys
-    # Parse phase from command line
-    phase = 0
-    for arg in sys.argv:
-        if arg.startswith('--phase='):
-            phase = int(arg.split('=')[1])
-    
-    app_manager.AppManager.run_apps(['__main__'], {'phase': phase})
-
-
+# Entry point - no custom argument parsing needed
 if __name__ == '__main__':
-    main()
+    from ryu.cmd import manager
+    import sys
+    sys.argv = ['ryu-manager', __file__]
+    manager.main()
