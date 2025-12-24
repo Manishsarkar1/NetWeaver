@@ -2,21 +2,14 @@
 """
 Stateful SDN Moving Target Defense Controller (Ryu + OpenFlow 1.3)
 
-Single-file controller implementing:
-- Phase 0: Baseline learning switch (pure L2 forwarding)
-- Phase 1: Traffic visibility (passive monitoring, classification)
-- Phase 2: Flow-locked IP virtualization (paired forward/reverse rewrites)
-- Phase 3: Controlled IP shuffling (time or trigger based; never reshuffle active flows)
-- Phase 4: Attack detection & triggered MTD (SYN/ICMP/port-scan detectors)
+Fixed version: ensures rewrites are installed only on the true ingress (host access) switch,
+tracks host attachments (MAC -> switch, port), updates flow last_seen, uses deterministic VIP
+allocation, rewrites both src and dst, and performs safe shuffles only on inactive flows.
 
-Design notes:
-- VIP allocation is deterministic (ordered pool).
-- Rewrites are applied on the ingress switch only to avoid mismatch on intermediate hops.
-- Forward and reverse flows share the same cookie for safe deletion.
-- Shuffle installs new flows before deleting old ones and only reshuffles inactive flows.
-- ARP is never rewritten.
+Usage:
+    export MTD_PHASE=2
+    ryu-manager mtd_controller.py
 """
-
 import os
 import time
 import struct
@@ -112,7 +105,7 @@ class BaselineLearningSwitch:
 # ====================================================================
 class TrafficMonitor:
     def __init__(self):
-        self.host_table = {}
+        self.host_table = {}  # mac -> {ip, switch, port, last_seen}
         self.flow_stats = {}
 
     def update_host(self, mac, ip, switch_id, port):
@@ -159,7 +152,7 @@ class TrafficMonitor:
         console.print(table)
 
 # ====================================================================
-# PHASE 2: IP Virtualization (edge-only)
+# PHASE 2: IP Virtualization (edge-only, deterministic)
 # ====================================================================
 class IPVirtualization:
     def __init__(self):
@@ -304,6 +297,44 @@ class IPVirtualization:
         )
         datapath.send_msg(mod)
 
+    def install_paired_flows_with_vips(self, datapath, in_port, out_port,
+                                       src_real, dst_real, src_vip, dst_vip,
+                                       proto=None, idle=300, hard=600, cookie=None):
+        parser = datapath.ofproto_parser
+        if cookie is None:
+            cookie = self.create_flow_pair_cookie()
+
+        # Forward
+        match_fwd = parser.OFPMatch(
+            in_port=in_port,
+            eth_type=0x0800,
+            ipv4_src=src_real,
+            ipv4_dst=dst_real
+        )
+        actions_fwd = [
+            parser.OFPActionSetField(ipv4_src=src_vip),
+            parser.OFPActionSetField(ipv4_dst=dst_vip),
+            parser.OFPActionOutput(out_port)
+        ]
+        self._add_flow(datapath, priority=200, match=match_fwd,
+                       actions=actions_fwd, idle=idle, hard=hard, cookie=cookie)
+
+        # Reverse
+        match_rev = parser.OFPMatch(
+            eth_type=0x0800,
+            ipv4_src=dst_real,
+            ipv4_dst=dst_vip
+        )
+        actions_rev = [
+            parser.OFPActionSetField(ipv4_dst=src_real),
+            parser.OFPActionSetField(ipv4_src=dst_real),
+            parser.OFPActionOutput(in_port)
+        ]
+        self._add_flow(datapath, priority=200, match=match_rev,
+                       actions=actions_rev, idle=idle, hard=hard, cookie=cookie)
+
+        return cookie
+
     def shuffle_vips_safe(self, datapath_getter, active_threshold=DEFAULT_ACTIVE_THRESHOLD):
         console.print("\n[magenta bold]🔄 VIP SHUFFLE INITIATED (safe)[/magenta bold]\n")
         now = time.time()
@@ -374,44 +405,6 @@ class IPVirtualization:
 
             console.print(f"[cyan]{src_real}[/cyan]: {old_src_vip} → [green]{new_src_vip}[/green]")
             console.print(f"[cyan]{dst_real}[/cyan]: {old_dst_vip} → [green]{new_dst_vip}[/green]")
-
-    def install_paired_flows_with_vips(self, datapath, in_port, out_port,
-                                       src_real, dst_real, src_vip, dst_vip,
-                                       proto=None, idle=300, hard=600, cookie=None):
-        parser = datapath.ofproto_parser
-        if cookie is None:
-            cookie = self.create_flow_pair_cookie()
-
-        # Forward
-        match_fwd = parser.OFPMatch(
-            in_port=in_port,
-            eth_type=0x0800,
-            ipv4_src=src_real,
-            ipv4_dst=dst_real
-        )
-        actions_fwd = [
-            parser.OFPActionSetField(ipv4_src=src_vip),
-            parser.OFPActionSetField(ipv4_dst=dst_vip),
-            parser.OFPActionOutput(out_port)
-        ]
-        self._add_flow(datapath, priority=200, match=match_fwd,
-                       actions=actions_fwd, idle=idle, hard=hard, cookie=cookie)
-
-        # Reverse
-        match_rev = parser.OFPMatch(
-            eth_type=0x0800,
-            ipv4_src=dst_real,
-            ipv4_dst=dst_vip
-        )
-        actions_rev = [
-            parser.OFPActionSetField(ipv4_dst=src_real),
-            parser.OFPActionSetField(ipv4_src=dst_real),
-            parser.OFPActionOutput(in_port)
-        ]
-        self._add_flow(datapath, priority=200, match=match_rev,
-                       actions=actions_rev, idle=idle, hard=hard, cookie=cookie)
-
-        return cookie
 
 # ====================================================================
 # PHASE 4: Attack Detector
@@ -548,6 +541,7 @@ class StatefulMTDController(app_manager.RyuApp):
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
+        in_port = msg.match.get('in_port')
 
         # Phase 0: baseline only
         if self.phase == 0:
@@ -565,18 +559,32 @@ class StatefulMTDController(app_manager.RyuApp):
             self.switches[dpid].handle_packet(msg, pkt, eth)
             return
 
+        # Record host attachment when we see IPv4 packets (MAC -> ip, switch, port)
+        if ipv4_pkt:
+            self.monitor.update_host(eth.src, ipv4_pkt.src, dpid, in_port)
+
         # Phase 1: passive monitoring
         if self.phase >= 1 and ipv4_pkt:
             protocol = "TCP" if tcp_pkt else "UDP" if udp_pkt else "ICMP" if icmp_pkt else "IP"
             self.monitor.log_flow(eth.src, eth.dst, ipv4_pkt.src, ipv4_pkt.dst, protocol, dpid)
 
-        # Phase 2+: IP virtualization (edge-only)
+        # Phase 2+: IP virtualization (edge-only, gated by host attachment)
         if self.phase >= 2 and ipv4_pkt:
-            in_port = msg.match['in_port']
+            # Determine out_port using baseline learning switch (this also learns MACs)
             out_port = self.switches[dpid].handle_packet(msg, pkt, eth)
 
             # If flood, do not install rewrite flows
             if out_port == datapath.ofproto.OFPP_FLOOD:
+                return
+
+            # Only install rewrite flows if this datapath+port is the host's access port
+            host_entry = self.monitor.host_table.get(eth.src)
+            is_host_access = (host_entry is not None and
+                              host_entry.get('switch') == dpid and
+                              host_entry.get('port') == in_port)
+
+            if not is_host_access:
+                # Intermediate switch: do not install rewrite flows here.
                 return
 
             proto = None
@@ -592,7 +600,7 @@ class StatefulMTDController(app_manager.RyuApp):
                 dst_port = udp_pkt.dst_port
 
             # Install edge-only rewrite flows on the ingress datapath
-            self.vip.install_rewrite_flows_edge(
+            cookie = self.vip.install_rewrite_flows_edge(
                 datapath=datapath,
                 in_port=in_port,
                 out_port=out_port,
@@ -606,6 +614,11 @@ class StatefulMTDController(app_manager.RyuApp):
                 idle=300,
                 hard=600
             )
+
+            # Update last_seen for the newly created flow
+            if cookie and cookie in self.vip.active_flows:
+                self.vip.active_flows[cookie]['last_seen'] = time.time()
+
             return
 
         # Phase 4: attack detection
