@@ -248,6 +248,9 @@ class IPVirtualization:
         """
         Install bidirectional IP rewrite flows
         CRITICAL: Both directions use same cookie for pairing
+        
+        FORWARD: Real_A → Real_B (rewrite src to VIP_A)
+        REVERSE: Real_B → Real_A (match on dst=VIP_A, rewrite back to Real_A)
         """
         parser = datapath.ofproto_parser
         ofproto = datapath.ofproto
@@ -259,14 +262,14 @@ class IPVirtualization:
         # Create flow pair cookie
         cookie = self.create_flow_pair()
         
-        # FORWARD FLOW: Real src → Real dst (rewrite src to VIP)
+        # FORWARD FLOW: Real src → Real dst
+        # Match: src=Real_A, dst=Real_B
+        # Action: Rewrite src to VIP_A, forward
         match_fwd = parser.OFPMatch(
             in_port=in_port,
             eth_type=0x0800,
             ipv4_src=src_ip_real,
-            ipv4_dst=dst_ip_real,
-            eth_src=eth_src,
-            eth_dst=eth_dst
+            ipv4_dst=dst_ip_real
         )
         
         actions_fwd = [
@@ -277,18 +280,18 @@ class IPVirtualization:
         self._add_flow(datapath, priority=100, match=match_fwd, 
                       actions=actions_fwd, idle=30, hard=60, cookie=cookie)
         
-        # REVERSE FLOW: VIP dst → VIP src (rewrite dst back to Real)
+        # REVERSE FLOW: Real dst → Real src (return path)
+        # Match: src=Real_B, dst=VIP_A (NOT Real_A!)
+        # Action: Rewrite dst back to Real_A, forward back
         match_rev = parser.OFPMatch(
             in_port=out_port,
             eth_type=0x0800,
-            ipv4_src=dst_ip_real,
-            ipv4_dst=src_vip,
-            eth_src=eth_dst,
-            eth_dst=eth_src
+            ipv4_src=dst_ip_real,  # Reply comes from Real_B
+            ipv4_dst=src_vip        # Destined to VIP_A (not Real_A!)
         )
         
         actions_rev = [
-            parser.OFPActionSetField(ipv4_dst=src_ip_real),
+            parser.OFPActionSetField(ipv4_dst=src_ip_real),  # Rewrite back to Real_A
             parser.OFPActionOutput(in_port)
         ]
         
