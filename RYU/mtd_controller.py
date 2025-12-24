@@ -2,9 +2,11 @@
 """
 Stateful SDN Moving Target Defense Controller (Ryu + OpenFlow 1.3)
 
-Fixed version: ensures rewrites are installed only on the true ingress (host access) switch,
-tracks host attachments (MAC -> switch, port), updates flow last_seen, uses deterministic VIP
-allocation, rewrites both src and dst, and performs safe shuffles only on inactive flows.
+Fixes applied:
+- Debounce host attachment: only install rewrites when host seen earlier (stable)
+- Avoid duplicate installs: check active_flows for existing mapping on same switch
+- Deterministic VIP allocation, edge-only rewrites, safe shuffle, attack detection
+- Increased idle/hard timeouts for stability during testing
 
 Usage:
     export MTD_PHASE=2
@@ -38,6 +40,7 @@ console = Console()
 PHASE = int(os.environ.get('MTD_PHASE', 0))  # 0..4
 DEFAULT_SHUFFLE_INTERVAL = 30  # seconds
 DEFAULT_ACTIVE_THRESHOLD = 60  # seconds
+HOST_DEBOUNCE = 0.5  # seconds: require host seen at least HOST_DEBOUNCE seconds before installing
 
 # ====================================================================
 # PHASE 0: Baseline Learning Switch
@@ -212,6 +215,13 @@ class IPVirtualization:
         )
         datapath.send_msg(mod)
 
+    def _has_active_flow(self, datapath_id, src_real, dst_real):
+        # Check if an active flow for this pair already exists on this switch
+        for f in self.active_flows.values():
+            if f['switch'] == datapath_id and f['src_real'] == src_real and f['dst_real'] == dst_real:
+                return True
+        return False
+
     def install_rewrite_flows_edge(self, datapath, in_port, out_port,
                                    src_ip_real, dst_ip_real, eth_src, eth_dst,
                                    proto=None, src_port=None, dst_port=None,
@@ -221,6 +231,11 @@ class IPVirtualization:
         Forward: Real_A -> Real_B  (rewrite src->VIP_A, dst->VIP_B)
         Reverse: packets destined to VIP_B are rewritten back to Real_A on the same ingress datapath.
         """
+        # Avoid duplicate installs on same switch for same real pair
+        if self._has_active_flow(datapath.id, src_ip_real, dst_ip_real):
+            console.print(f"[yellow]Skipping install: active flow exists on s{datapath.id} for {src_ip_real}->{dst_ip_real}[/yellow]")
+            return None
+
         parser = datapath.ofproto_parser
 
         src_vip = self.allocate_vip(src_ip_real)
@@ -568,7 +583,7 @@ class StatefulMTDController(app_manager.RyuApp):
             protocol = "TCP" if tcp_pkt else "UDP" if udp_pkt else "ICMP" if icmp_pkt else "IP"
             self.monitor.log_flow(eth.src, eth.dst, ipv4_pkt.src, ipv4_pkt.dst, protocol, dpid)
 
-        # Phase 2+: IP virtualization (edge-only, gated by host attachment)
+        # Phase 2+: IP virtualization (edge-only, gated by stable host attachment)
         if self.phase >= 2 and ipv4_pkt:
             # Determine out_port using baseline learning switch (this also learns MACs)
             out_port = self.switches[dpid].handle_packet(msg, pkt, eth)
@@ -579,12 +594,16 @@ class StatefulMTDController(app_manager.RyuApp):
 
             # Only install rewrite flows if this datapath+port is the host's access port
             host_entry = self.monitor.host_table.get(eth.src)
-            is_host_access = (host_entry is not None and
-                              host_entry.get('switch') == dpid and
-                              host_entry.get('port') == in_port)
+            now = time.time()
+            is_host_access = False
+            if host_entry is not None:
+                # require host seen earlier than HOST_DEBOUNCE seconds to avoid race
+                if host_entry.get('switch') == dpid and host_entry.get('port') == in_port:
+                    if now - host_entry.get('last_seen', 0) >= HOST_DEBOUNCE:
+                        is_host_access = True
 
             if not is_host_access:
-                # Intermediate switch: do not install rewrite flows here.
+                console.print(f"[yellow]Skipping rewrite install on s{dpid}:{in_port} for {ipv4_pkt.src} (not stable access)[/yellow]")
                 return
 
             proto = None
