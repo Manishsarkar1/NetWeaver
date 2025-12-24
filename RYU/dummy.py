@@ -2,18 +2,18 @@ from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER, set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ipv4, arp
+from ryu.lib.packet import packet, ethernet, arp, ipv4
 from ryu.lib import hub
-
 import random
 import time
 
-# COLORS
+# ========= COLORS =========
 G = "\033[92m"
 R = "\033[91m"
 Y = "\033[93m"
 C = "\033[96m"
 W = "\033[0m"
+B = "\033[94m"
 
 class MTDController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -24,30 +24,29 @@ class MTDController(app_manager.RyuApp):
         self.mac_to_port = {}
         self.real_to_virtual = {}
         self.virtual_to_real = {}
-        self.active_flows = set()
 
-        self.shuffle_interval = 20
+        self.shuffle_interval = 10  # seconds
+        self.virtual_pool = [f"192.168.100.{i}" for i in range(50, 250)]
 
         print(f"\n{G}✔ SAFE MTD IP Rewrite Controller Started{W}\n")
-        hub.spawn(self.shuffle_loop)
 
-    # -------------------------------------------------
+        self.shuffle_thread = hub.spawn(self.ip_shuffle_loop)
+
+    # ================= SWITCH SETUP =================
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features(self, ev):
         dp = ev.msg.datapath
         ofp = dp.ofproto
         parser = dp.ofproto_parser
 
-        self.mac_to_port.setdefault(dp.id, {})
-
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofp.OFPP_CONTROLLER,
                                           ofp.OFPCML_NO_BUFFER)]
         self.add_flow(dp, 0, match, actions)
 
-        print(f"{C}[✓] Switch {dp.id} connected{W}")
+        print(f"{G}[✓] Switch {dp.id} connected{W}")
 
-    def add_flow(self, dp, priority, match, actions, idle=15):
+    def add_flow(self, dp, priority, match, actions, buffer_id=None):
         ofp = dp.ofproto
         parser = dp.ofproto_parser
 
@@ -58,114 +57,108 @@ class MTDController(app_manager.RyuApp):
             priority=priority,
             match=match,
             instructions=inst,
-            idle_timeout=idle
+            buffer_id=buffer_id if buffer_id else ofp.OFP_NO_BUFFER
         )
         dp.send_msg(mod)
 
-    # -------------------------------------------------
+    # ================= PACKET HANDLER =================
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in(self, ev):
         msg = ev.msg
         dp = msg.datapath
-        parser = dp.ofproto_parser
         ofp = dp.ofproto
-        in_port = msg.match['in_port']
+        parser = dp.ofproto_parser
+        dpid = dp.id
+
+        self.mac_to_port.setdefault(dpid, {})
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
+        arp_pkt = pkt.get_protocol(arp.arp)
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
 
         if eth.ethertype == 0x88cc:
             return
 
-        dpid = dp.id
-        self.mac_to_port.setdefault(dpid, {})
-        self.mac_to_port[dpid][eth.src] = in_port
-        out_port = self.mac_to_port[dpid].get(eth.dst, ofp.OFPP_FLOOD)
+        src = eth.src
+        dst = eth.dst
+        in_port = msg.match['in_port']
 
-        # ARP untouched
-        if pkt.get_protocol(arp.arp):
-            self.forward(dp, msg, in_port, out_port)
+        self.mac_to_port[dpid][src] = in_port
+        out_port = self.mac_to_port[dpid].get(dst, ofp.OFPP_FLOOD)
+
+        actions = []
+
+        # ================= ARP HANDLING =================
+        if arp_pkt:
+            real_src = arp_pkt.src_ip
+            real_dst = arp_pkt.dst_ip
+
+            if real_src not in self.real_to_virtual:
+                self.assign_virtual_ip(real_src)
+
+            if real_dst in self.real_to_virtual:
+                arp_pkt.dst_ip = self.real_to_virtual[real_dst]
+
+            arp_pkt.src_ip = self.real_to_virtual[real_src]
+
+            actions.append(parser.OFPActionOutput(out_port))
+            out = parser.OFPPacketOut(
+                datapath=dp,
+                buffer_id=ofp.OFP_NO_BUFFER,
+                in_port=in_port,
+                actions=actions,
+                data=pkt.data
+            )
+            dp.send_msg(out)
             return
 
-        ip = pkt.get_protocol(ipv4.ipv4)
-        if not ip:
-            self.forward(dp, msg, in_port, out_port)
-            return
+        # ================= IP REWRITE =================
+        if ip_pkt:
+            real_src = ip_pkt.src
+            real_dst = ip_pkt.dst
 
-        # Assign VIPs once
-        if ip.src not in self.real_to_virtual:
-            self.assign_vip(ip.src)
+            if real_src not in self.real_to_virtual:
+                self.assign_virtual_ip(real_src)
 
-        if ip.dst not in self.real_to_virtual:
-            self.assign_vip(ip.dst)
+            if real_dst in self.real_to_virtual:
+                ip_pkt.dst = self.real_to_virtual[real_dst]
 
-        vip_src = self.real_to_virtual[ip.src]
-        vip_dst = self.real_to_virtual[ip.dst]
+            ip_pkt.src = self.real_to_virtual[real_src]
 
-        self.active_flows.add((ip.src, ip.dst))
+            actions.extend([
+                parser.OFPActionSetField(ipv4_src=ip_pkt.src),
+                parser.OFPActionSetField(ipv4_dst=ip_pkt.dst),
+                parser.OFPActionOutput(out_port)
+            ])
+        else:
+            actions.append(parser.OFPActionOutput(out_port))
 
-        # Forward rule
-        match_fwd = parser.OFPMatch(
-            eth_type=0x0800,
-            ipv4_src=ip.src,
-            ipv4_dst=ip.dst
-        )
-
-        actions_fwd = [
-            parser.OFPActionSetField(ipv4_src=vip_src),
-            parser.OFPActionSetField(ipv4_dst=vip_dst),
-            parser.OFPActionOutput(out_port)
-        ]
-
-        self.add_flow(dp, 10, match_fwd, actions_fwd)
-
-        # Reverse rule
-        match_rev = parser.OFPMatch(
-            eth_type=0x0800,
-            ipv4_src=vip_dst,
-            ipv4_dst=vip_src
-        )
-
-        actions_rev = [
-            parser.OFPActionSetField(ipv4_src=ip.dst),
-            parser.OFPActionSetField(ipv4_dst=ip.src),
-            parser.OFPActionOutput(in_port)
-        ]
-
-        self.add_flow(dp, 10, match_rev, actions_rev)
-
-        self.forward(dp, msg, in_port, actions_fwd)
-
-    def forward(self, dp, msg, in_port, actions):
-        parser = dp.ofproto_parser
         out = parser.OFPPacketOut(
             datapath=dp,
-            buffer_id=dp.ofproto.OFP_NO_BUFFER,
+            buffer_id=ofp.OFP_NO_BUFFER,
             in_port=in_port,
             actions=actions,
             data=msg.data
         )
         dp.send_msg(out)
 
-    # -------------------------------------------------
-    def assign_vip(self, real_ip):
-        vip = f"192.168.100.{random.randint(10,250)}"
-        self.real_to_virtual[real_ip] = vip
-        self.virtual_to_real[vip] = real_ip
-        print(f"{Y}[MAP]{W} {real_ip} → {vip}")
-
-    def shuffle_loop(self):
+    # ================= IP SHUFFLING =================
+    def ip_shuffle_loop(self):
         while True:
-            hub.sleep(self.shuffle_interval)
-
-            if self.active_flows:
-                print(f"{R}[SKIP]{W} Active flows present — shuffle postponed")
-                self.active_flows.clear()
+            time.sleep(self.shuffle_interval)
+            if not self.real_to_virtual:
                 continue
 
-            print(f"\n{G}⚡ SAFE IP SHUFFLE{W}")
-            for real_ip in self.real_to_virtual:
-                vip = f"192.168.100.{random.randint(10,250)}"
-                self.real_to_virtual[real_ip] = vip
-                self.virtual_to_real[vip] = real_ip
-                print(f"{C}{real_ip}{W} ⇒ {vip}")
+            print(f"\n{Y}⚡ IP SHUFFLE TRIGGERED{W}")
+            for real_ip in list(self.real_to_virtual.keys()):
+                new_virtual = random.choice(self.virtual_pool)
+                self.real_to_virtual[real_ip] = new_virtual
+                self.virtual_to_real[new_virtual] = real_ip
+                print(f"{C}{real_ip} ⇒ {new_virtual}{W}")
+
+    def assign_virtual_ip(self, real_ip):
+        v_ip = random.choice(self.virtual_pool)
+        self.real_to_virtual[real_ip] = v_ip
+        self.virtual_to_real[v_ip] = real_ip
+        print(f"{B}[MAP] {real_ip} → {v_ip}{W}")
