@@ -2,19 +2,19 @@
 """
 Stateful SDN Moving Target Defense Controller (Ryu + OpenFlow 1.3)
 
-Features:
+Single-file controller implementing:
 - Phase 0: Baseline learning switch (pure L2 forwarding)
 - Phase 1: Traffic visibility (passive monitoring, classification)
 - Phase 2: Flow-locked IP virtualization (paired forward/reverse rewrites)
 - Phase 3: Controlled IP shuffling (time or trigger based; never reshuffle active flows)
 - Phase 4: Attack detection & triggered MTD (SYN/ICMP/port-scan detectors)
 
-Design principles (why):
-- Deterministic VIP allocation: avoid non-determinism across runs and tests.
-- Paired flows with same cookie: allow safe deletion by cookie and atomic swap.
-- Track last_seen and handle flow-removed events: know which flows are active.
-- Install new flows before deleting old ones during shuffle: avoid transient blackholes.
-- Never rewrite ARP: preserve host discovery and ping reliability.
+Design notes:
+- VIP allocation is deterministic (ordered pool).
+- Rewrites are applied on the ingress switch only to avoid mismatch on intermediate hops.
+- Forward and reverse flows share the same cookie for safe deletion.
+- Shuffle installs new flows before deleting old ones and only reshuffles inactive flows.
+- ARP is never rewritten.
 """
 
 import os
@@ -27,7 +27,7 @@ from datetime import datetime
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, DEAD_DISPATCHER
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, arp, ipv4, icmp, tcp, udp
@@ -43,20 +43,13 @@ console = Console()
 # CONFIGURATION
 # ====================================================================
 PHASE = int(os.environ.get('MTD_PHASE', 0))  # 0..4
-# Shuffle interval for scheduled shuffles (phase >=3)
 DEFAULT_SHUFFLE_INTERVAL = 30  # seconds
-# Active threshold: flows seen within this many seconds are considered active and not reshuffled
 DEFAULT_ACTIVE_THRESHOLD = 60  # seconds
 
 # ====================================================================
 # PHASE 0: Baseline Learning Switch
 # ====================================================================
 class BaselineLearningSwitch:
-    """
-    Pure L2 learning switch.
-    Kept minimal and deterministic: this is the stable baseline that must
-    always preserve connectivity (pingall).
-    """
     def __init__(self, datapath):
         self.dp = datapath
         self.ofproto = datapath.ofproto
@@ -93,14 +86,14 @@ class BaselineLearningSwitch:
 
         actions = [self.parser.OFPActionOutput(out_port)]
 
-        # Install flow for known destination to reduce controller load
+        # Install flow for known destination
         if out_port != self.ofproto.OFPP_FLOOD:
             match = self.parser.OFPMatch(
                 in_port=in_port,
                 eth_dst=eth.dst,
                 eth_src=eth.src
             )
-            self.add_flow(priority=10, match=match, actions=actions, idle=30, hard=60)
+            self.add_flow(priority=10, match=match, actions=actions, idle=300, hard=600)
 
         # Send packet out
         data = msg.data if msg.buffer_id == self.ofproto.OFP_NO_BUFFER else None
@@ -118,13 +111,9 @@ class BaselineLearningSwitch:
 # PHASE 1: Traffic Monitor
 # ====================================================================
 class TrafficMonitor:
-    """
-    Passive traffic visibility. Tracks MAC->IP->switch->port and classifies zones.
-    This component never modifies packets.
-    """
     def __init__(self):
-        self.host_table = {}  # mac -> {ip, switch, port, last_seen}
-        self.flow_stats = {}  # flow_id -> stats
+        self.host_table = {}
+        self.flow_stats = {}
 
     def update_host(self, mac, ip, switch_id, port):
         self.host_table[mac] = {
@@ -170,49 +159,37 @@ class TrafficMonitor:
         console.print(table)
 
 # ====================================================================
-# PHASE 2: IP Virtualization (flow-locked)
+# PHASE 2: IP Virtualization (edge-only)
 # ====================================================================
 class IPVirtualization:
-    """
-    Manage deterministic VIP allocation and flow-level state.
-    Key invariants:
-    - VIP allocation is deterministic (list, pop(0))
-    - Each flow pair (forward+reverse) uses the same cookie
-    - Flow state stores last_seen to protect active flows during shuffles
-    - Rewrites are reversible and installed atomically (install new flows before deleting old)
-    """
     def __init__(self):
-        self.real_to_virtual = {}    # real_ip -> vip
-        self.virtual_to_real = {}    # vip -> real_ip
-        self.active_flows = {}       # cookie -> flow metadata
+        self.real_to_virtual = {}
+        self.virtual_to_real = {}
+        self.active_flows = {}  # cookie -> metadata
         self.next_cookie = 0x1000
         self.virtual_pool = []
         self._init_virtual_pool()
 
     def _init_virtual_pool(self):
-        # Deterministic ascending VIP pool
         for i in range(1, 255):
             self.virtual_pool.append(f"192.168.100.{i}")
 
     def allocate_vip(self, real_ip):
-        # Return existing mapping if present
         if real_ip in self.real_to_virtual:
             return self.real_to_virtual[real_ip]
         if not self.virtual_pool:
             raise Exception("Virtual IP pool exhausted")
-        vip = self.virtual_pool.pop(0)  # deterministic: lowest available
+        vip = self.virtual_pool.pop(0)
         self.real_to_virtual[real_ip] = vip
         self.virtual_to_real[vip] = real_ip
         console.print(f"[green]VIP ALLOCATED[/green]: {real_ip} → {vip}")
         return vip
 
     def release_vip(self, vip):
-        # Return VIP to pool deterministically (append to end)
         if not vip:
             return
         if vip in self.virtual_pool:
             return
-        # Remove mapping if exists
         real = self.virtual_to_real.pop(vip, None)
         if real:
             self.real_to_virtual.pop(real, None)
@@ -242,86 +219,51 @@ class IPVirtualization:
         )
         datapath.send_msg(mod)
 
-    def install_rewrite_flows(self, datapath, in_port, out_port,
-                              src_ip_real, dst_ip_real, eth_src, eth_dst,
-                              proto=None, src_port=None, dst_port=None,
-                              idle=30, hard=60):
+    def install_rewrite_flows_edge(self, datapath, in_port, out_port,
+                                   src_ip_real, dst_ip_real, eth_src, eth_dst,
+                                   proto=None, src_port=None, dst_port=None,
+                                   idle=300, hard=600):
         """
-        Install paired forward and reverse flows that rewrite both source and destination IPs.
+        Edge-only rewrite: install paired forward+reverse flows on the ingress datapath only.
         Forward: Real_A -> Real_B  (rewrite src->VIP_A, dst->VIP_B)
-        Reverse: Reply from Real_B -> Real_A (match on src=Real_B, dst=VIP_B; rewrite dst->Real_A, src->Real_B)
-        Both flows share the same cookie for atomic deletion.
+        Reverse: packets destined to VIP_B are rewritten back to Real_A on the same ingress datapath.
         """
         parser = datapath.ofproto_parser
-        ofproto = datapath.ofproto
 
-        # Allocate VIPs deterministically
         src_vip = self.allocate_vip(src_ip_real)
         dst_vip = self.allocate_vip(dst_ip_real)
-
         cookie = self.create_flow_pair_cookie()
 
-        # Build forward match (match on IPs and optionally transport ports)
-        match_fields_fwd = {
-            'eth_type': 0x0800,
-            'ipv4_src': src_ip_real,
-            'ipv4_dst': dst_ip_real
-        }
-        if proto == 'TCP':
-            match_fields_fwd['ip_proto'] = 6
-            if src_port:
-                match_fields_fwd['tcp_src'] = src_port
-            if dst_port:
-                match_fields_fwd['tcp_dst'] = dst_port
-        elif proto == 'UDP':
-            match_fields_fwd['ip_proto'] = 17
-            if src_port:
-                match_fields_fwd['udp_src'] = src_port
-            if dst_port:
-                match_fields_fwd['udp_dst'] = dst_port
-
-        match_fwd = parser.OFPMatch(**match_fields_fwd)
-
+        # Forward: match on real src/dst at ingress, rewrite both src->VIP_A and dst->VIP_B, then output
+        match_fwd = parser.OFPMatch(
+            in_port=in_port,
+            eth_type=0x0800,
+            ipv4_src=src_ip_real,
+            ipv4_dst=dst_ip_real
+        )
         actions_fwd = [
             parser.OFPActionSetField(ipv4_src=src_vip),
             parser.OFPActionSetField(ipv4_dst=dst_vip),
             parser.OFPActionOutput(out_port)
         ]
-
         self._add_flow(datapath, priority=200, match=match_fwd,
                        actions=actions_fwd, idle=idle, hard=hard, cookie=cookie)
 
-        # Reverse flow: packets from Real_B to VIP_B (reply path)
-        match_fields_rev = {
-            'eth_type': 0x0800,
-            'ipv4_src': dst_ip_real,
-            'ipv4_dst': dst_vip
-        }
-        if proto == 'TCP':
-            match_fields_rev['ip_proto'] = 6
-            if src_port:
-                match_fields_rev['tcp_dst'] = src_port  # reply dst is original src port
-            if dst_port:
-                match_fields_rev['tcp_src'] = dst_port
-        elif proto == 'UDP':
-            match_fields_rev['ip_proto'] = 17
-            if src_port:
-                match_fields_rev['udp_dst'] = src_port
-            if dst_port:
-                match_fields_rev['udp_src'] = dst_port
-
-        match_rev = parser.OFPMatch(**match_fields_rev)
-
+        # Reverse: match replies arriving to VIP_B (packets coming back to the ingress switch destined to dst_vip)
+        match_rev = parser.OFPMatch(
+            eth_type=0x0800,
+            ipv4_src=dst_ip_real,
+            ipv4_dst=dst_vip
+        )
         actions_rev = [
             parser.OFPActionSetField(ipv4_dst=src_ip_real),
             parser.OFPActionSetField(ipv4_src=dst_ip_real),
             parser.OFPActionOutput(in_port)
         ]
-
         self._add_flow(datapath, priority=200, match=match_rev,
                        actions=actions_rev, idle=idle, hard=hard, cookie=cookie)
 
-        # Store flow state (last_seen will be updated on packet events)
+        # Store flow state
         self.active_flows[cookie] = {
             'src_real': src_ip_real,
             'dst_real': dst_ip_real,
@@ -331,14 +273,12 @@ class IPVirtualization:
             'created': time.time(),
             'last_seen': time.time(),
             'cookie': cookie,
-            'proto': proto,
             'in_port': in_port,
-            'out_port': out_port
+            'out_port': out_port,
+            'proto': proto
         }
 
-        # Log flow lock
         self._log_flow_locked(src_ip_real, src_vip, dst_ip_real, dst_vip, datapath.id, cookie)
-
         return cookie
 
     def _log_flow_locked(self, src_real, src_vip, dst_real, dst_vip, switch_id, cookie):
@@ -352,11 +292,9 @@ class IPVirtualization:
         )
         console.print(panel)
 
-    # Helper to delete flows by cookie (use cookie and cookie_mask)
     def delete_flows_by_cookie(self, datapath, cookie):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        # Delete flows with exact cookie
         mod = parser.OFPFlowMod(
             datapath=datapath,
             cookie=cookie,
@@ -366,90 +304,9 @@ class IPVirtualization:
         )
         datapath.send_msg(mod)
 
-    # Helper to install paired flows given explicit VIPs and cookie (used during shuffle)
-    def install_paired_flows_with_vips(self, datapath, in_port, out_port,
-                                       src_real, dst_real, src_vip, dst_vip,
-                                       proto=None, src_port=None, dst_port=None,
-                                       idle=30, hard=60, cookie=None):
-        parser = datapath.ofproto_parser
-        ofproto = datapath.ofproto
-        if cookie is None:
-            cookie = self.create_flow_pair_cookie()
-
-        # Forward
-        match_fields_fwd = {
-            'eth_type': 0x0800,
-            'ipv4_src': src_real,
-            'ipv4_dst': dst_real
-        }
-        if proto == 'TCP':
-            match_fields_fwd['ip_proto'] = 6
-            if src_port:
-                match_fields_fwd['tcp_src'] = src_port
-            if dst_port:
-                match_fields_fwd['tcp_dst'] = dst_port
-        elif proto == 'UDP':
-            match_fields_fwd['ip_proto'] = 17
-            if src_port:
-                match_fields_fwd['udp_src'] = src_port
-            if dst_port:
-                match_fields_fwd['udp_dst'] = dst_port
-
-        match_fwd = parser.OFPMatch(**match_fields_fwd)
-        actions_fwd = [
-            parser.OFPActionSetField(ipv4_src=src_vip),
-            parser.OFPActionSetField(ipv4_dst=dst_vip),
-            parser.OFPActionOutput(out_port)
-        ]
-        self._add_flow(datapath, priority=200, match=match_fwd,
-                       actions=actions_fwd, idle=idle, hard=hard, cookie=cookie)
-
-        # Reverse
-        match_fields_rev = {
-            'eth_type': 0x0800,
-            'ipv4_src': dst_real,
-            'ipv4_dst': dst_vip
-        }
-        if proto == 'TCP':
-            match_fields_rev['ip_proto'] = 6
-            if src_port:
-                match_fields_rev['tcp_dst'] = src_port
-            if dst_port:
-                match_fields_rev['tcp_src'] = dst_port
-        elif proto == 'UDP':
-            match_fields_rev['ip_proto'] = 17
-            if src_port:
-                match_fields_rev['udp_dst'] = src_port
-            if dst_port:
-                match_fields_rev['udp_src'] = dst_port
-
-        match_rev = parser.OFPMatch(**match_fields_rev)
-        actions_rev = [
-            parser.OFPActionSetField(ipv4_dst=src_real),
-            parser.OFPActionSetField(ipv4_src=dst_real),
-            parser.OFPActionOutput(in_port)
-        ]
-        self._add_flow(datapath, priority=200, match=match_rev,
-                       actions=actions_rev, idle=idle, hard=hard, cookie=cookie)
-
-        # Return cookie used
-        return cookie
-
-    # Shuffle algorithm: only reshuffle inactive flows
     def shuffle_vips_safe(self, datapath_getter, active_threshold=DEFAULT_ACTIVE_THRESHOLD):
-        """
-        Shuffle VIPs only for flows that have been inactive for at least active_threshold seconds.
-        Steps for each inactive flow:
-          1. Allocate new VIPs deterministically
-          2. Install new paired flows (new cookie)
-          3. Delete old flows by cookie
-          4. Release old VIPs
-          5. Update active_flows mapping
-        This preserves connectivity by installing new flows before deleting old ones.
-        """
         console.print("\n[magenta bold]🔄 VIP SHUFFLE INITIATED (safe)[/magenta bold]\n")
         now = time.time()
-        # Collect candidates (cookie keys) to shuffle
         candidates = []
         for cookie, f in list(self.active_flows.items()):
             last = f.get('last_seen', f.get('created', 0))
@@ -466,7 +323,7 @@ class IPVirtualization:
             dp_id = f['switch']
             datapath = datapath_getter(dp_id)
             if datapath is None:
-                console.print(f"[red]Datapath s{dp_id} not found; skipping shuffle for cookie 0x{old_cookie:x}[/red]")
+                console.print(f"[red]Datapath s{dp_id} not found; skipping cookie 0x{old_cookie:x}[/red]")
                 continue
 
             old_src_vip = f['src_vip']
@@ -476,7 +333,7 @@ class IPVirtualization:
             new_src_vip = self.allocate_vip(src_real)
             new_dst_vip = self.allocate_vip(dst_real)
 
-            # Install new paired flows with new cookie
+            # Install new paired flows with new cookie on the same ingress datapath
             new_cookie = self.create_flow_pair_cookie()
             self.install_paired_flows_with_vips(
                 datapath,
@@ -487,10 +344,8 @@ class IPVirtualization:
                 src_vip=new_src_vip,
                 dst_vip=new_dst_vip,
                 proto=f.get('proto'),
-                src_port=None,
-                dst_port=None,
-                idle=30,
-                hard=60,
+                idle=300,
+                hard=600,
                 cookie=new_cookie
             )
 
@@ -512,30 +367,62 @@ class IPVirtualization:
                 'created': time.time(),
                 'last_seen': old_entry.get('last_seen', old_entry.get('created', time.time())),
                 'cookie': new_cookie,
-                'proto': old_entry.get('proto'),
                 'in_port': old_entry.get('in_port'),
-                'out_port': old_entry.get('out_port')
+                'out_port': old_entry.get('out_port'),
+                'proto': old_entry.get('proto')
             }
 
-            # Log mapping change
             console.print(f"[cyan]{src_real}[/cyan]: {old_src_vip} → [green]{new_src_vip}[/green]")
             console.print(f"[cyan]{dst_real}[/cyan]: {old_dst_vip} → [green]{new_dst_vip}[/green]")
+
+    def install_paired_flows_with_vips(self, datapath, in_port, out_port,
+                                       src_real, dst_real, src_vip, dst_vip,
+                                       proto=None, idle=300, hard=600, cookie=None):
+        parser = datapath.ofproto_parser
+        if cookie is None:
+            cookie = self.create_flow_pair_cookie()
+
+        # Forward
+        match_fwd = parser.OFPMatch(
+            in_port=in_port,
+            eth_type=0x0800,
+            ipv4_src=src_real,
+            ipv4_dst=dst_real
+        )
+        actions_fwd = [
+            parser.OFPActionSetField(ipv4_src=src_vip),
+            parser.OFPActionSetField(ipv4_dst=dst_vip),
+            parser.OFPActionOutput(out_port)
+        ]
+        self._add_flow(datapath, priority=200, match=match_fwd,
+                       actions=actions_fwd, idle=idle, hard=hard, cookie=cookie)
+
+        # Reverse
+        match_rev = parser.OFPMatch(
+            eth_type=0x0800,
+            ipv4_src=dst_real,
+            ipv4_dst=dst_vip
+        )
+        actions_rev = [
+            parser.OFPActionSetField(ipv4_dst=src_real),
+            parser.OFPActionSetField(ipv4_src=dst_real),
+            parser.OFPActionOutput(in_port)
+        ]
+        self._add_flow(datapath, priority=200, match=match_rev,
+                       actions=actions_rev, idle=idle, hard=hard, cookie=cookie)
+
+        return cookie
 
 # ====================================================================
 # PHASE 4: Attack Detector
 # ====================================================================
 class AttackDetector:
-    """
-    Lightweight detectors for SYN scans, ICMP floods, and port sweeps.
-    On detection, it signals for an emergency shuffle (controller coordinates).
-    """
     def __init__(self):
-        self.syn_tracker = {}      # src_ip -> count
-        self.icmp_tracker = {}     # src_ip -> count
-        self.port_scanner = {}     # src_ip -> set(dst_ports)
-        self.window_size = 10      # seconds
+        self.syn_tracker = {}
+        self.icmp_tracker = {}
+        self.port_scanner = {}
+        self.window_size = 10
         self.last_cleanup = time.time()
-        # Thresholds (tunable)
         self.SYN_THRESHOLD = 50
         self.ICMP_THRESHOLD = 100
         self.PORT_SCAN_THRESHOLD = 20
@@ -591,7 +478,7 @@ class StatefulMTDController(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(StatefulMTDController, self).__init__(*args, **kwargs)
         self.phase = PHASE
-        self.switches = {}  # dpid -> BaselineLearningSwitch
+        self.switches = {}
         self.monitor = TrafficMonitor()
         self.vip = IPVirtualization()
         self.detector = AttackDetector()
@@ -599,11 +486,10 @@ class StatefulMTDController(app_manager.RyuApp):
         self.shuffle_interval = DEFAULT_SHUFFLE_INTERVAL
         self.shuffle_thread = None
         self._shuffle_mutex = threading.Lock()
-        self._datapaths = {}  # dpid -> datapath object (for lookup)
+        self._datapaths = {}
 
         self._print_banner()
 
-        # Start scheduled shuffle thread only for phase >= 3
         if self.phase >= 3:
             self.shuffle_thread = hub.spawn(self._mtd_loop)
 
@@ -658,18 +544,16 @@ class StatefulMTDController(app_manager.RyuApp):
         dpid = datapath.id
 
         if dpid not in self.switches:
-            # Should not happen, but be defensive
             return
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
 
-        # Phase 0: baseline learning switch only
+        # Phase 0: baseline only
         if self.phase == 0:
             self.switches[dpid].handle_packet(msg, pkt, eth)
             return
 
-        # Extract protocols
         arp_pkt = pkt.get_protocol(arp.arp)
         ipv4_pkt = pkt.get_protocol(ipv4.ipv4)
         tcp_pkt = pkt.get_protocol(tcp.tcp)
@@ -686,17 +570,15 @@ class StatefulMTDController(app_manager.RyuApp):
             protocol = "TCP" if tcp_pkt else "UDP" if udp_pkt else "ICMP" if icmp_pkt else "IP"
             self.monitor.log_flow(eth.src, eth.dst, ipv4_pkt.src, ipv4_pkt.dst, protocol, dpid)
 
-        # Phase 2+: IP virtualization and flow-locked rewriting
+        # Phase 2+: IP virtualization (edge-only)
         if self.phase >= 2 and ipv4_pkt:
             in_port = msg.match['in_port']
-            # Use baseline to learn MACs and determine out_port
             out_port = self.switches[dpid].handle_packet(msg, pkt, eth)
 
-            # If flood, do not install rewrite flows (let learning switch flood)
+            # If flood, do not install rewrite flows
             if out_port == datapath.ofproto.OFPP_FLOOD:
                 return
 
-            # Determine transport info for more specific matching (optional)
             proto = None
             src_port = None
             dst_port = None
@@ -709,8 +591,8 @@ class StatefulMTDController(app_manager.RyuApp):
                 src_port = udp_pkt.src_port
                 dst_port = udp_pkt.dst_port
 
-            # Install paired rewrite flows (this will allocate VIPs deterministically)
-            cookie = self.vip.install_rewrite_flows(
+            # Install edge-only rewrite flows on the ingress datapath
+            self.vip.install_rewrite_flows_edge(
                 datapath=datapath,
                 in_port=in_port,
                 out_port=out_port,
@@ -721,16 +603,14 @@ class StatefulMTDController(app_manager.RyuApp):
                 proto=proto,
                 src_port=src_port,
                 dst_port=dst_port,
-                idle=30,
-                hard=60
+                idle=300,
+                hard=600
             )
-
-            # After installing flows, we should not process this packet further (flows will handle)
             return
 
-        # Phase 4: attack detection (only runs if phase >= 4)
+        # Phase 4: attack detection
         if self.phase >= 4 and ipv4_pkt:
-            if tcp_pkt and (tcp_pkt.bits & 0x02):  # SYN flag
+            if tcp_pkt and (tcp_pkt.bits & 0x02):  # SYN
                 if self.detector.track_syn(ipv4_pkt.src):
                     self._trigger_emergency_shuffle()
 
@@ -744,7 +624,7 @@ class StatefulMTDController(app_manager.RyuApp):
 
             self.detector.cleanup()
 
-        # Fallback: baseline forwarding
+        # Fallback baseline
         self.switches[dpid].handle_packet(msg, pkt, eth)
 
     # -------------------------
@@ -754,16 +634,14 @@ class StatefulMTDController(app_manager.RyuApp):
     def flow_removed_handler(self, ev):
         msg = ev.msg
         cookie = msg.cookie
-        # When a flow is removed, free VIPs and remove state
         if cookie in self.vip.active_flows:
             f = self.vip.active_flows.pop(cookie)
             console.print(f"[yellow]Flow removed cookie 0x{cookie:x}[/yellow]")
-            # Release VIPs deterministically
             self.vip.release_vip(f.get('src_vip'))
             self.vip.release_vip(f.get('dst_vip'))
 
     # -------------------------
-    # Helper: get datapath by dpid
+    # Helpers
     # -------------------------
     def _get_datapath(self, dpid):
         return self._datapaths.get(dpid)
@@ -772,36 +650,18 @@ class StatefulMTDController(app_manager.RyuApp):
     # MTD loop and shuffle coordination
     # -------------------------
     def _mtd_loop(self):
-        """Scheduled shuffle loop (runs in a green thread)."""
         while True:
             hub.sleep(self.shuffle_interval)
             console.print(f"\n[yellow]⏰ Scheduled shuffle (interval: {self.shuffle_interval}s)[/yellow]\n")
-            # Acquire mutex to avoid concurrent shuffles
             with self._shuffle_mutex:
                 self.vip.shuffle_vips_safe(self._get_datapath, active_threshold=DEFAULT_ACTIVE_THRESHOLD)
 
     def _trigger_emergency_shuffle(self):
-        """Trigger immediate VIP shuffle on attack detection (synchronized)."""
         console.print("\n[red bold]⚡ EMERGENCY SHUFFLE TRIGGERED[/red bold]\n")
-        # Run shuffle synchronously under lock to avoid races with scheduled shuffle
         with self._shuffle_mutex:
-            # Optionally reduce active_threshold to be more aggressive during emergency
             self.vip.shuffle_vips_safe(self._get_datapath, active_threshold=int(DEFAULT_ACTIVE_THRESHOLD / 2))
 
-    # -------------------------
-    # Update last_seen for flows when relevant (optional improvement)
-    # -------------------------
-    # This method can be called by packet processing paths if you detect a packet
-    # that belongs to an existing flow mapping. For simplicity, we update last_seen
-    # in install_rewrite_flows and rely on flow-removed events and scheduled updates.
-    def update_flow_last_seen(self, src_real, dst_real):
-        now = time.time()
-        for cookie, f in self.vip.active_flows.items():
-            if f['src_real'] == src_real and f['dst_real'] == dst_real:
-                f['last_seen'] = now
-                break
-
-# Entry point for running as a script
+# Entry point
 if __name__ == '__main__':
     from ryu.cmd import manager
     import sys
