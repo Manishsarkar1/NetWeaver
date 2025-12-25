@@ -1,91 +1,69 @@
-#!/usr/bin/env python3
-
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER, set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, arp, ipv4
+from ryu.lib import hub
 import random
+import time
 
-# =============================
-# CONFIG
-# =============================
-PHASE = 2   # 0 = L2 only, 2 = Source-IP MTD
-
-# =============================
-# LEARNING SWITCH
-# =============================
-
-class LearningSwitch:
-    def __init__(self):
-        self.mac_to_port = {}
-
-# =============================
-# SOURCE-IP MTD
-# =============================
-
-class SourceIPMTD:
-    def __init__(self):
-        self.map = {}
-        self.pool = [f"192.168.100.{i}" for i in range(10, 250)]
-        random.shuffle(self.pool)
-
-    def vip(self, real_ip):
-        if real_ip not in self.map:
-            self.map[real_ip] = self.pool.pop()
-            print(f"[MTD] {real_ip} → {self.map[real_ip]}")
-        return self.map[real_ip]
-
-# =============================
-# CONTROLLER
-# =============================
+MTD_INTERVAL = 15  # seconds
+VIRTUAL_NET = "192.168.100."
 
 class MTDController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.switches = {}
-        self.mtd = SourceIPMTD()
-        print("\n[✓] Source-IP MTD Controller Started\n")
 
-    # -------------------------
-    # SWITCH CONNECT
-    # -------------------------
+        self.mac_to_port = {}
+        self.ip_to_mac = {}
+        self.real_to_virtual = {}
+        self.virtual_to_real = {}
 
+        self.datapath = None
+        self.monitor_thread = hub.spawn(self.mtd_loop)
+
+        print("\n[✓] MTD Controller Started (REAL Flow-Based MTD)\n")
+
+    # ---------- SWITCH SETUP ----------
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
-    def switch_features(self, ev):
+    def switch_features_handler(self, ev):
         dp = ev.msg.datapath
-        parser = dp.ofproto_parser
+        self.datapath = dp
         ofp = dp.ofproto
+        parser = dp.ofproto_parser
 
-        self.switches[dp.id] = LearningSwitch()
-
+        # Table-miss
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofp.OFPP_CONTROLLER, ofp.OFPCML_NO_BUFFER)]
-        dp.send_msg(parser.OFPFlowMod(
-            datapath=dp,
-            priority=0,
-            match=match,
-            instructions=[parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
-        ))
+        self.add_flow(dp, 0, match, actions)
 
         print(f"[✓] Switch s{dp.id} connected")
 
-    # -------------------------
-    # PACKET IN
-    # -------------------------
+    # ---------- FLOW UTILS ----------
+    def add_flow(self, dp, priority, match, actions, idle=0):
+        ofp = dp.ofproto
+        parser = dp.ofproto_parser
 
+        inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
+        mod = parser.OFPFlowMod(
+            datapath=dp,
+            priority=priority,
+            idle_timeout=idle,
+            match=match,
+            instructions=inst
+        )
+        dp.send_msg(mod)
+
+    # ---------- PACKET HANDLER ----------
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in(self, ev):
         msg = ev.msg
         dp = msg.datapath
-        parser = dp.ofproto_parser
         ofp = dp.ofproto
-        dpid = dp.id
+        parser = dp.ofproto_parser
         in_port = msg.match['in_port']
-
-        sw = self.switches[dpid]
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
@@ -93,82 +71,128 @@ class MTDController(app_manager.RyuApp):
         if eth.ethertype == 0x88cc:
             return
 
-        # Learn MAC
-        sw.mac_to_port[eth.src] = in_port
-        out_port = sw.mac_to_port.get(eth.dst, ofp.OFPP_FLOOD)
+        self.mac_to_port.setdefault(dp.id, {})
+        self.mac_to_port[dp.id][eth.src] = in_port
 
-        # ARP — DO NOT TOUCH
-        if pkt.get_protocol(arp.arp):
-            self._send(dp, msg, in_port, out_port)
+        # ---------- ARP ----------
+        arp_pkt = pkt.get_protocol(arp.arp)
+        if arp_pkt:
+            self.handle_arp(dp, in_port, eth, arp_pkt)
             return
 
-        ip = pkt.get_protocol(ipv4.ipv4)
-        if not ip or PHASE == 0:
-            self._send(dp, msg, in_port, out_port)
+        # ---------- IPV4 ----------
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        if ip_pkt:
+            self.handle_ipv4(dp, in_port, eth, ip_pkt)
             return
 
-        # ============================
-        # SOURCE-IP MTD (SAFE)
-        # ============================
+        # ---------- L2 FALLBACK ----------
+        out_port = self.mac_to_port[dp.id].get(eth.dst, ofp.OFPP_FLOOD)
+        actions = [parser.OFPActionOutput(out_port)]
+        out = parser.OFPPacketOut(dp, msg.buffer_id, in_port, actions, msg.data)
+        dp.send_msg(out)
 
-        vip = self.mtd.vip(ip.src)
+    # ---------- ARP PROXY ----------
+    def handle_arp(self, dp, in_port, eth, arp_pkt):
+        parser = dp.ofproto_parser
 
+        self.ip_to_mac[arp_pkt.src_ip] = eth.src
+
+        if arp_pkt.opcode == arp.ARP_REQUEST:
+            target_ip = arp_pkt.dst_ip
+
+            if target_ip in self.real_to_virtual:
+                reply_mac = eth.src
+                reply_ip = target_ip
+
+                arp_reply = packet.Packet()
+                arp_reply.add_protocol(
+                    ethernet.ethernet(
+                        ethertype=0x0806,
+                        dst=eth.src,
+                        src=reply_mac
+                    )
+                )
+                arp_reply.add_protocol(
+                    arp.arp(
+                        opcode=arp.ARP_REPLY,
+                        src_mac=reply_mac,
+                        src_ip=reply_ip,
+                        dst_mac=eth.src,
+                        dst_ip=arp_pkt.src_ip
+                    )
+                )
+                arp_reply.serialize()
+
+                out = parser.OFPPacketOut(
+                    datapath=dp,
+                    buffer_id=0xffffffff,
+                    in_port=dp.ofproto.OFPP_CONTROLLER,
+                    actions=[parser.OFPActionOutput(in_port)],
+                    data=arp_reply.data
+                )
+                dp.send_msg(out)
+
+    # ---------- IPV4 + MTD ----------
+    def handle_ipv4(self, dp, in_port, eth, ip_pkt):
+        parser = dp.ofproto_parser
+        ofp = dp.ofproto
+
+        src_real = ip_pkt.src
+        dst_real = ip_pkt.dst
+
+        if src_real not in self.real_to_virtual:
+            return
+
+        src_virtual = self.real_to_virtual[src_real]
+        dst_virtual = self.real_to_virtual.get(dst_real, dst_real)
+
+        out_port = self.mac_to_port[dp.id].get(eth.dst, ofp.OFPP_FLOOD)
+
+        # FORWARD
         match_fwd = parser.OFPMatch(
-            in_port=in_port,
             eth_type=0x0800,
-            ipv4_src=ip.src,
-            ipv4_dst=ip.dst
+            ipv4_src=src_real,
+            ipv4_dst=dst_real
         )
 
         actions_fwd = [
-            parser.OFPActionSetField(ipv4_src=vip),
+            parser.OFPActionSetField(ipv4_src=src_virtual),
+            parser.OFPActionSetField(ipv4_dst=dst_virtual),
             parser.OFPActionOutput(out_port)
         ]
 
+        self.add_flow(dp, 10, match_fwd, actions_fwd, idle=30)
+
+        # REVERSE
         match_rev = parser.OFPMatch(
-            in_port=out_port,
             eth_type=0x0800,
-            ipv4_src=ip.dst,
-            ipv4_dst=vip
+            ipv4_src=dst_virtual,
+            ipv4_dst=src_virtual
         )
 
         actions_rev = [
-            parser.OFPActionSetField(ipv4_dst=ip.src),
+            parser.OFPActionSetField(ipv4_src=dst_real),
+            parser.OFPActionSetField(ipv4_dst=src_real),
             parser.OFPActionOutput(in_port)
         ]
 
-        self._add_flow(dp, match_fwd, actions_fwd)
-        self._add_flow(dp, match_rev, actions_rev)
+        self.add_flow(dp, 10, match_rev, actions_rev, idle=30)
 
-        self._send(dp, msg, in_port, out_port, actions_fwd)
+    # ---------- MTD LOOP ----------
+    def mtd_loop(self):
+        while True:
+            time.sleep(MTD_INTERVAL)
+            if not self.ip_to_mac:
+                continue
 
-    # -------------------------
-    # HELPERS
-    # -------------------------
+            print("\n[MTD] Shuffling IPs")
 
-    def _add_flow(self, dp, match, actions):
-        parser = dp.ofproto_parser
-        ofp = dp.ofproto
-        dp.send_msg(parser.OFPFlowMod(
-            datapath=dp,
-            priority=100,
-            match=match,
-            instructions=[parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)],
-            idle_timeout=60,
-            hard_timeout=120
-        ))
+            self.real_to_virtual.clear()
+            self.virtual_to_real.clear()
 
-    def _send(self, dp, msg, in_port, out_port, actions=None):
-        parser = dp.ofproto_parser
-        ofp = dp.ofproto
-
-        if actions is None:
-            actions = [parser.OFPActionOutput(out_port)]
-
-        dp.send_msg(parser.OFPPacketOut(
-            datapath=dp,
-            buffer_id=msg.buffer_id,
-            in_port=in_port,
-            actions=actions,
-            data=msg.data if msg.buffer_id == ofp.OFP_NO_BUFFER else None
-        ))
+            for real_ip in self.ip_to_mac.keys():
+                virt_ip = VIRTUAL_NET + str(random.randint(10, 250))
+                self.real_to_virtual[real_ip] = virt_ip
+                self.virtual_to_real[virt_ip] = real_ip
+                print(f"  {real_ip} → {virt_ip}")
