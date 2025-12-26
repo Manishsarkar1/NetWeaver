@@ -1,14 +1,16 @@
-from ryu.base import app_manager
-from ryu.controller import ofp_event
-from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER, set_ev_cls
-from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, ipv4, arp
-from ryu.lib import hub
 import random
+
 from rich.console import Console
 from rich.table import Table
+from ryu.base import app_manager
+from ryu.controller import ofp_event
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
+from ryu.lib import hub
+from ryu.lib.packet import arp, ethernet, ipv4, packet
+from ryu.ofproto import ofproto_v1_3
 
 console = Console()
+
 
 class FlowBasedMTD(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -22,7 +24,9 @@ class FlowBasedMTD(app_manager.RyuApp):
 
         self.VIP_POOL = [f"192.168.100.{i}" for i in range(10, 250)]
 
-        console.print("\n[bold green]✔ Flow-Based MTD Controller Started[/bold green]\n")
+        console.print(
+            "\n[bold green]✔ Flow-Based MTD Controller Started[/bold green]\n"
+        )
 
     # ---------------- SWITCH SETUP ----------------
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -32,8 +36,7 @@ class FlowBasedMTD(app_manager.RyuApp):
         parser = dp.ofproto_parser
 
         match = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofp.OFPP_CONTROLLER,
-                                          ofp.OFPCML_NO_BUFFER)]
+        actions = [parser.OFPActionOutput(ofp.OFPP_CONTROLLER, ofp.OFPCML_NO_BUFFER)]
         self.add_flow(dp, 0, match, actions)
 
         console.print(f"[cyan][✓] Switch {dp.id} connected[/cyan]")
@@ -45,12 +48,12 @@ class FlowBasedMTD(app_manager.RyuApp):
         dp = msg.datapath
         ofp = dp.ofproto
         parser = dp.ofproto_parser
-        in_port = msg.match['in_port']
+        in_port = msg.match["in_port"]
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
 
-        if eth.ethertype == 0x88cc:
+        if eth.ethertype == 0x88CC:
             return
 
         dpid = dp.id
@@ -78,35 +81,38 @@ class FlowBasedMTD(app_manager.RyuApp):
         vip_src = self.real_to_virtual[src_ip]
 
         # Forward flow
-        self.install_flow(dp,
-                          in_port=in_port,
-                          src=src_ip,
-                          dst=dst_ip,
-                          new_src=vip_src,
-                          out_port=out_port)
+        self.install_flow(
+            dp,
+            in_port=in_port,
+            src=src_ip,
+            dst=dst_ip,
+            new_src=vip_src,
+            out_port=out_port,
+        )
 
         # Reverse flow
         if dst_ip in self.real_to_virtual:
             vip_dst = self.real_to_virtual[dst_ip]
-            self.install_flow(dp,
-                              in_port=out_port,
-                              src=dst_ip,
-                              dst=vip_src,
-                              new_dst=src_ip,
-                              out_port=in_port)
+            self.install_flow(
+                dp,
+                in_port=out_port,
+                src=dst_ip,
+                dst=vip_src,
+                new_dst=src_ip,
+                out_port=in_port,
+            )
 
         self.forward(dp, msg, in_port, out_port)
 
     # ---------------- FLOW INSTALL ----------------
-    def install_flow(self, dp, in_port, src, dst, new_src=None, new_dst=None, out_port=None):
+    def install_flow(
+        self, dp, in_port, src, dst, new_src=None, new_dst=None, out_port=None
+    ):
         ofp = dp.ofproto
         parser = dp.ofproto_parser
 
         match = parser.OFPMatch(
-            in_port=in_port,
-            eth_type=0x0800,
-            ipv4_src=src,
-            ipv4_dst=dst
+            in_port=in_port, eth_type=0x0800, ipv4_src=src, ipv4_dst=dst
         )
 
         actions = []
@@ -130,7 +136,7 @@ class FlowBasedMTD(app_manager.RyuApp):
             priority=priority,
             match=match,
             instructions=inst,
-            idle_timeout=idle
+            idle_timeout=idle,
         )
 
         dp.send_msg(mod)
@@ -146,7 +152,7 @@ class FlowBasedMTD(app_manager.RyuApp):
             buffer_id=msg.buffer_id,
             in_port=in_port,
             actions=actions,
-            data=None if msg.buffer_id != ofp.OFP_NO_BUFFER else msg.data
+            data=None if msg.buffer_id != ofp.OFP_NO_BUFFER else msg.data,
         )
         dp.send_msg(out)
 
