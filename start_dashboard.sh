@@ -67,4 +67,4 @@ echo "================================================"
 echo ""
 
 # Start the controller
-ryu-manager mtd_web_dashboard.py
+ryu-manager controller_with_webdash.py
