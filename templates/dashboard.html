@@ -1,107 +1,681 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>MTD Dashboard</title>
+    <title>MTD Dashboard - Dark Mode</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
+        * {
             margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
+
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #e0e0e0;
+        }
+
         .container { 
-            max-width: 1400px; 
-            margin: 0 auto; 
-            background: white;
+            max-width: 1600px; 
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(30, 30, 46, 0.95);
             padding: 30px;
             border-radius: 15px;
-        }
-        h1 { color: #667eea; text-align: center; }
-        .stats { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
-            gap: 20px; 
-            margin: 20px 0;
-        }
-        .stat-box { 
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white; 
-            padding: 20px; 
-            border-radius: 10px; 
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            margin-bottom: 20px;
             text-align: center;
+            border: 1px solid rgba(100, 100, 255, 0.2);
         }
-        .stat-value { font-size: 2em; font-weight: bold; }
-        .stat-label { font-size: 0.9em; margin-top: 5px; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background: #f0f0f0; }
-        .event { background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #667eea; }
-        .ip-badge { display: inline-block; padding: 5px 10px; border-radius: 5px; font-family: monospace; margin: 2px; }
-        .real-ip { background: #dbeafe; color: #1e40af; }
-        .virtual-ip { background: #d1fae5; color: #065f46; }
+
+        .header h1 {
+            color: #7dd3fc;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 0 20px rgba(125, 211, 252, 0.3);
+        }
+
+        .header .subtitle {
+            color: #94a3b8;
+            font-size: 1.1em;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #10b981;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+            box-shadow: 0 0 10px #10b981;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: rgba(30, 30, 46, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(100, 100, 255, 0.2);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid rgba(100, 100, 255, 0.2);
+        }
+
+        .card-title {
+            font-size: 1.3em;
+            color: #7dd3fc;
+            font-weight: 600;
+        }
+
+        .stat-box {
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .protocol-stats {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .protocol-box {
+            flex: 1;
+            min-width: 100px;
+            background: rgba(45, 45, 68, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border-left: 4px solid;
+        }
+
+        .protocol-box.icmp { border-left-color: #3b82f6; }
+        .protocol-box.tcp { border-left-color: #10b981; }
+        .protocol-box.udp { border-left-color: #f59e0b; }
+        .protocol-box.arp { border-left-color: #8b5cf6; }
+
+        .protocol-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #e0e0e0;
+        }
+
+        .protocol-label {
+            font-size: 0.85em;
+            color: #94a3b8;
+            margin-top: 5px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(100, 100, 255, 0.2);
+        }
+
+        th {
+            background: rgba(45, 45, 68, 0.8);
+            font-weight: 600;
+            color: #7dd3fc;
+        }
+
+        tr:hover {
+            background: rgba(45, 45, 68, 0.5);
+        }
+
+        .ip-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .real-ip {
+            background: rgba(59, 130, 246, 0.3);
+            color: #7dd3fc;
+            border: 1px solid rgba(59, 130, 246, 0.5);
+        }
+
+        .virtual-ip {
+            background: rgba(16, 185, 129, 0.3);
+            color: #6ee7b7;
+            border: 1px solid rgba(16, 185, 129, 0.5);
+        }
+
+        .event-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .event-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            background: rgba(45, 45, 68, 0.8);
+            border-left: 4px solid #3b82f6;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .event-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .event-protocol {
+            font-weight: bold;
+            color: #7dd3fc;
+        }
+
+        .event-time {
+            color: #94a3b8;
+            font-size: 0.85em;
+        }
+
+        .event-details {
+            font-size: 0.9em;
+            color: #cbd5e1;
+        }
+
+        .connection-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: rgba(45, 45, 68, 0.8);
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .connection-protocol {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: bold;
+            color: white;
+        }
+
+        .protocol-ICMP { background: #3b82f6; }
+        .protocol-TCP { background: #10b981; }
+        .protocol-UDP { background: #f59e0b; }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 20px;
+        }
+
+        /* Scrollbar styling for dark theme */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(45, 45, 68, 0.5);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(59, 130, 246, 0.5);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(59, 130, 246, 0.7);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        .badge-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .wide-card {
+            grid-column: 1 / -1;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🛡️ MTD Controller Dashboard</h1>
-        <div class="stats">
-            <div class="stat-box"><div class="stat-value" id="uptime">00:00:00</div><div class="stat-label">Uptime</div></div>
-            <div class="stat-box"><div class="stat-value" id="totalMorphs">0</div><div class="stat-label">Total Morphs</div></div>
-            <div class="stat-box"><div class="stat-value" id="vipAllocations">0</div><div class="stat-label">VIP Allocations</div></div>
-            <div class="stat-box"><div class="stat-value" id="icmpPackets">0</div><div class="stat-label">ICMP Packets</div></div>
-            <div class="stat-box"><div class="stat-value" id="tcpPackets">0</div><div class="stat-label">TCP Packets</div></div>
-            <div class="stat-box"><div class="stat-value" id="udpPackets">0</div><div class="stat-label">UDP Packets</div></div>
+        <!-- Header -->
+        <div class="header">
+            <h1>🛡️ MTD Controller Dashboard</h1>
+            <p class="subtitle">
+                <span class="status-indicator"></span>
+                Moving Target Defense - Real-time Monitoring
+            </p>
         </div>
-        <h2>Current VIP Mappings</h2>
-        <table><thead><tr><th>Real IP</th><th></th><th>Virtual IP</th></tr></thead>
-        <tbody id="mappingsBody"><tr><td colspan="3" style="text-align:center;">No mappings yet</td></tr></tbody></table>
-        <h2>Recent Morph Events</h2>
-        <div id="morphEvents"><p style="text-align:center; color:#999;">No events yet</p></div>
-        <h2>Active Connections</h2>
-        <div id="connections"><p style="text-align:center; color:#999;">No connections yet</p></div>
+
+        <!-- Stats Grid -->
+        <div class="grid">
+            <!-- Overview Stats -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📊 Overview</span>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="uptime">--:--:--</div>
+                    <div class="stat-label">Uptime</div>
+                </div>
+                <div class="stat-box" style="background: linear-gradient(135deg, #f59e0b 0%, #dc2626 100%);">
+                    <div class="stat-value" id="totalMorphs">0</div>
+                    <div class="stat-label">Total Morphs</div>
+                </div>
+                <div class="stat-box" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    <div class="stat-value" id="vipAllocations">0</div>
+                    <div class="stat-label">VIP Allocations</div>
+                </div>
+            </div>
+
+            <!-- Protocol Stats -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📡 Packet Statistics</span>
+                </div>
+                <div class="protocol-stats">
+                    <div class="protocol-box icmp">
+                        <div class="protocol-value" id="icmpPackets">0</div>
+                        <div class="protocol-label">ICMP</div>
+                    </div>
+                    <div class="protocol-box tcp">
+                        <div class="protocol-value" id="tcpPackets">0</div>
+                        <div class="protocol-label">TCP</div>
+                    </div>
+                    <div class="protocol-box udp">
+                        <div class="protocol-value" id="udpPackets">0</div>
+                        <div class="protocol-label">UDP</div>
+                    </div>
+                    <div class="protocol-box arp">
+                        <div class="protocol-value" id="arpPackets">0</div>
+                        <div class="protocol-label">ARP</div>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="packetChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Morph Stats by Protocol -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🔄 Morphs by Protocol</span>
+                </div>
+                <div class="protocol-stats">
+                    <div class="protocol-box icmp">
+                        <div class="protocol-value" id="icmpMorphs">0</div>
+                        <div class="protocol-label">ICMP</div>
+                    </div>
+                    <div class="protocol-box tcp">
+                        <div class="protocol-value" id="tcpMorphs">0</div>
+                        <div class="protocol-label">TCP</div>
+                    </div>
+                    <div class="protocol-box udp">
+                        <div class="protocol-value" id="udpMorphs">0</div>
+                        <div class="protocol-label">UDP</div>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="morphChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current VIP Mappings -->
+        <div class="grid">
+            <div class="card wide-card">
+                <div class="card-header">
+                    <span class="card-title">🗺️ Current VIP Mappings</span>
+                    <span class="badge badge-success" id="mappingCount">0 Active</span>
+                </div>
+                <div id="mappingsContainer">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Real IP</th>
+                                <th></th>
+                                <th>Virtual IP</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mappingsTableBody">
+                            <tr>
+                                <td colspan="3" class="empty-state">No active mappings</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Connections and Recent Morphs -->
+        <div class="grid">
+            <!-- Active Connections -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🔗 Active Connections</span>
+                </div>
+                <div class="event-list" id="connectionsContainer">
+                    <div class="empty-state">No active connections</div>
+                </div>
+            </div>
+
+            <!-- Recent Morph Events -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">📋 Recent Morph Events</span>
+                </div>
+                <div class="event-list" id="morphEventsContainer">
+                    <div class="empty-state">No morph events yet</div>
+                </div>
+            </div>
+        </div>
     </div>
+
     <script>
+        // Socket.IO connection
         const socket = io();
+
+        // Charts
+        let packetChart, morphChart;
+
+        // Initialize charts with dark theme
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.borderColor = 'rgba(100, 100, 255, 0.2)';
+
+        function initCharts() {
+            // Packet chart
+            const packetCtx = document.getElementById('packetChart').getContext('2d');
+            packetChart = new Chart(packetCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['ICMP', 'TCP', 'UDP', 'ARP'],
+                    datasets: [{
+                        data: [0, 0, 0, 0],
+                        backgroundColor: [
+                            '#3b82f6',
+                            '#10b981',
+                            '#f59e0b',
+                            '#8b5cf6'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: '#94a3b8'
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Morph chart
+            const morphCtx = document.getElementById('morphChart').getContext('2d');
+            morphChart = new Chart(morphCtx, {
+                type: 'bar',
+                data: {
+                    labels: ['ICMP', 'TCP', 'UDP'],
+                    datasets: [{
+                        label: 'Morphs',
+                        data: [0, 0, 0],
+                        backgroundColor: [
+                            '#3b82f6',
+                            '#10b981',
+                            '#f59e0b'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1,
+                                color: '#94a3b8'
+                            },
+                            grid: {
+                                color: 'rgba(100, 100, 255, 0.1)'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                color: '#94a3b8'
+                            },
+                            grid: {
+                                color: 'rgba(100, 100, 255, 0.1)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update statistics
         function updateStats(stats) {
-            document.getElementById('uptime').textContent = stats.uptime || '00:00:00';
+            document.getElementById('uptime').textContent = stats.uptime || '--:--:--';
             document.getElementById('totalMorphs').textContent = stats.total_morphs || 0;
             document.getElementById('vipAllocations').textContent = stats.vip_allocations || 0;
+
+            // Packet stats
             const packets = stats.packets_by_protocol || {};
             document.getElementById('icmpPackets').textContent = packets.ICMP || 0;
             document.getElementById('tcpPackets').textContent = packets.TCP || 0;
             document.getElementById('udpPackets').textContent = packets.UDP || 0;
-            updateMorphHistory(stats.morph_history || []);
+            document.getElementById('arpPackets').textContent = packets.ARP || 0;
+
+            // Update packet chart
+            packetChart.data.datasets[0].data = [
+                packets.ICMP || 0,
+                packets.TCP || 0,
+                packets.UDP || 0,
+                packets.ARP || 0
+            ];
+            packetChart.update();
+
+            // Morph stats
+            const morphs = stats.morphs_by_protocol || {};
+            document.getElementById('icmpMorphs').textContent = morphs.ICMP || 0;
+            document.getElementById('tcpMorphs').textContent = morphs.TCP || 0;
+            document.getElementById('udpMorphs').textContent = morphs.UDP || 0;
+
+            // Update morph chart
+            morphChart.data.datasets[0].data = [
+                morphs.ICMP || 0,
+                morphs.TCP || 0,
+                morphs.UDP || 0
+            ];
+            morphChart.update();
+
+            // Update active connections
             updateConnections(stats.active_connections || []);
+
+            // Update morph history
+            updateMorphHistory(stats.morph_history || []);
         }
+
+        // Update VIP mappings table
         function updateMappings(mappings) {
-            const tbody = document.getElementById('mappingsBody');
+            const tbody = document.getElementById('mappingsTableBody');
+            
             if (!mappings || mappings.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No mappings yet</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No active mappings</td></tr>';
+                document.getElementById('mappingCount').textContent = '0 Active';
                 return;
             }
-            tbody.innerHTML = mappings.map(m => '<tr><td><span class="ip-badge real-ip">'+m.real_ip+'</span></td><td style="text-align:center;">↔</td><td><span class="ip-badge virtual-ip">'+m.vip+'</span></td></tr>').join('');
+
+            document.getElementById('mappingCount').textContent = `${mappings.length} Active`;
+
+            tbody.innerHTML = mappings.map(m => `
+                <tr>
+                    <td><span class="ip-badge real-ip">${m.real_ip}</span></td>
+                    <td style="text-align: center;">↔</td>
+                    <td><span class="ip-badge virtual-ip">${m.vip}</span></td>
+                </tr>
+            `).join('');
         }
-        function updateMorphHistory(history) {
-            const container = document.getElementById('morphEvents');
-            if (!history || history.length === 0) {
-                container.innerHTML = '<p style="text-align:center; color:#999;">No events yet</p>';
-                return;
-            }
-            container.innerHTML = history.slice().reverse().slice(0,10).map(event => '<div class="event"><strong>'+event.protocol+' Morph</strong> - '+event.timestamp+'<br>'+event.ip1+': '+event.old_vip1+' → '+event.new_vip1+'<br>'+event.ip2+': '+event.old_vip2+' → '+event.new_vip2+'</div>').join('');
-        }
+
+        // Update active connections
         function updateConnections(connections) {
-            const container = document.getElementById('connections');
+            const container = document.getElementById('connectionsContainer');
+            
             if (!connections || connections.length === 0) {
-                container.innerHTML = '<p style="text-align:center; color:#999;">No connections yet</p>';
+                container.innerHTML = '<div class="empty-state">No active connections</div>';
                 return;
             }
-            container.innerHTML = connections.slice().reverse().slice(0,10).map(conn => '<div class="event"><strong>'+conn.protocol+'</strong>: '+conn.src_ip+(conn.src_port?':'+conn.src_port:'')+' → '+conn.dst_ip+(conn.dst_port?':'+conn.dst_port:'')+' <span style="float:right;">'+conn.timestamp+'</span></div>').join('');
+
+            container.innerHTML = connections.slice().reverse().slice(0, 20).map(conn => `
+                <div class="connection-item">
+                    <div>
+                        <span class="connection-protocol protocol-${conn.protocol}">${conn.protocol}</span>
+                        <span style="margin-left: 10px; font-family: monospace;">
+                            ${conn.src_ip}${conn.src_port ? ':' + conn.src_port : ''} → 
+                            ${conn.dst_ip}${conn.dst_port ? ':' + conn.dst_port : ''}
+                        </span>
+                    </div>
+                    <div class="event-time">${conn.timestamp}</div>
+                </div>
+            `).join('');
         }
-        socket.on('connect', () => console.log('Connected'));
-        socket.on('stats_update', updateStats);
-        socket.on('mappings_update', data => updateMappings(data.mappings));
-        setInterval(() => { fetch('/api/stats').then(r => r.json()).then(updateStats).catch(err => console.error('Error:', err)); }, 2000);
+
+        // Update morph history
+        function updateMorphHistory(history) {
+            const container = document.getElementById('morphEventsContainer');
+            
+            if (!history || history.length === 0) {
+                container.innerHTML = '<div class="empty-state">No morph events yet</div>';
+                return;
+            }
+
+            container.innerHTML = history.slice().reverse().map(event => `
+                <div class="event-item">
+                    <div class="event-header">
+                        <span class="event-protocol">${event.protocol} Morph</span>
+                        <span class="event-time">${event.timestamp}</span>
+                    </div>
+                    <div class="event-details">
+                        <div><strong>${event.ip1}</strong>: ${event.old_vip1} → ${event.new_vip1}</div>
+                        <div><strong>${event.ip2}</strong>: ${event.old_vip2} → ${event.new_vip2}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Socket.IO event handlers
+        socket.on('connect', () => {
+            console.log('Connected to MTD Controller');
+        });
+
+        socket.on('stats_update', (stats) => {
+            updateStats(stats);
+        });
+
+        socket.on('mappings_update', (data) => {
+            updateMappings(data.mappings);
+        });
+
+        socket.on('morph_event', (event) => {
+            console.log('Morph event:', event);
+        });
+
+        socket.on('connection_update', (data) => {
+            console.log('Connection update:', data);
+        });
+
+        // Fetch stats every 2 seconds
+        setInterval(() => {
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(stats => updateStats(stats))
+                .catch(err => console.error('Error fetching stats:', err));
+        }, 2000);
+
+        // Initialize
+        window.onload = () => {
+            initCharts();
+        };
     </script>
 </body>
 </html>
