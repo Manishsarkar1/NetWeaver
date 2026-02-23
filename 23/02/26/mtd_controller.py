@@ -312,6 +312,9 @@ class UltimateMTDController(app_manager.RyuApp):
         # Basic networking
         self.mac_to_port = {}
         self.datapaths = {}
+        
+        # Host tracking for topology
+        self.hosts = {}  # ip -> {'mac': mac, 'switch': dpid, 'port': port}
 
         # IP virtualization
         self.real_to_virtual = {}
@@ -392,6 +395,9 @@ class UltimateMTDController(app_manager.RyuApp):
         # Emit to web clients
         socketio.emit('vip_allocated', {'real_ip': real_ip, 'vip': vip})
         self._emit_current_mappings()
+        
+        # Update topology when new host discovered
+        self._update_topology()
 
         return vip
 
@@ -464,9 +470,27 @@ class UltimateMTDController(app_manager.RyuApp):
 
     def _update_topology(self):
         """Update network topology information"""
-        switches = [{'dpid': dpid} for dpid in self.datapaths.keys()]
-        hosts = [{'ip': ip, 'vip': vip} for ip, vip in self.real_to_virtual.items()]
-        links = []  # Would need LLDP for link discovery
+        switches = [{'dpid': dpid, 'id': f's{dpid}'} for dpid in self.datapaths.keys()]
+        
+        # Build hosts list from discovered IPs and MACs
+        hosts = []
+        links = []
+        
+        for ip, vip in self.real_to_virtual.items():
+            host_info = self.hosts.get(ip, {})
+            hosts.append({
+                'ip': ip,
+                'vip': vip,
+                'mac': host_info.get('mac', 'unknown'),
+                'id': ip
+            })
+            
+            # Create link if we know which switch this host is on
+            if 'switch' in host_info:
+                links.append({
+                    'from': f's{host_info["switch"]}',
+                    'to': ip
+                })
         
         self.stats.update_topology(switches, hosts, links)
         socketio.emit('topology_update', self.stats.topology)
@@ -710,6 +734,16 @@ class UltimateMTDController(app_manager.RyuApp):
         arp_pkt = pkt.get_protocol(arp.arp)
         if arp_pkt:
             self.stats.record_packet('ARP')
+            
+            # Track host from ARP
+            if arp_pkt.src_ip not in self.hosts:
+                self.hosts[arp_pkt.src_ip] = {
+                    'mac': eth.src,
+                    'switch': dpid,
+                    'port': in_port
+                }
+                self.logger.info(f"🆕 Discovered host: {arp_pkt.src_ip} ({eth.src}) on s{dpid} port {in_port}")
+            
             actions = [parser.OFPActionOutput(out_port)]
             data = msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER else None
             out = parser.OFPPacketOut(
@@ -726,6 +760,15 @@ class UltimateMTDController(app_manager.RyuApp):
         ipv4_pkt = pkt.get_protocol(ipv4.ipv4)
         if not ipv4_pkt:
             return
+        
+        # Track hosts from IP packets
+        if ipv4_pkt.src not in self.hosts:
+            self.hosts[ipv4_pkt.src] = {
+                'mac': eth.src,
+                'switch': dpid,
+                'port': in_port
+            }
+            self.logger.info(f"🆕 Discovered host: {ipv4_pkt.src} ({eth.src}) on s{dpid} port {in_port}")
 
         icmp_pkt = pkt.get_protocol(icmp.icmp)
         tcp_pkt = pkt.get_protocol(tcp.tcp)
