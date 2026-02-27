@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-02-27T10:37:45.122314",
+  "tests": [
+    {
+      "test_name": "latency",
+      "timestamp": "2026-02-27T10:37:45.124974",
+      "scenarios": []
+    },
+    {
+      "test_name": "throughput",
+      "timestamp": "2026-02-27T10:38:17.333403",
+      "duration": 10,
+      "scenarios": []
+    }
+  ]
+}
