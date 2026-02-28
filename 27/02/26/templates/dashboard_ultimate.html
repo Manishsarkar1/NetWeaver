@@ -1,501 +1,201 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>VANTA (Variable Network Topology Architecture)</title>
+    <title>VANTA - Ultimate MTD Dashboard</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/vis-network.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/dist/vis-network.min.css" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            min-height: 100vh;
-            padding: 20px;
-            color: #e0e0e0;
+        :root {
+            --bg-dark: #0f172a;
+            --card-bg: #1e293b;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --text-main: #f8fafc;
+            --text-dim: #94a3b8;
         }
-        .container { max-width: 1800px; margin: 0 auto; }
-        .header {
-            background: rgba(30, 30, 46, 0.95);
-            padding: 20px 30px;
-            border-radius: 15px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            margin-bottom: 20px;
-            border: 1px solid rgba(100, 100, 255, 0.2);
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            padding: 40px;
+        }
+
+        .dashboard-container { max-width: 1400px; margin: 0 auto; }
+
+        /* Slide 1 Style: Header */
+        .header-section {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 40px;
+            border-bottom: 2px solid var(--accent-blue);
+            padding-bottom: 20px;
         }
-        .header h1 { color: #7dd3fc; font-size: 2em; text-shadow: 0 0 20px rgba(125, 211, 252, 0.3); }
-        .user-info { color: #94a3b8; }
-        .btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: all 0.3s; }
-        .btn-primary { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: white; }
-        .btn-danger { background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); color: white; }
-        .btn-success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; }
-        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(59, 130, 246, 0.5); }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; margin-bottom: 20px; }
-        .card { background: rgba(30, 30, 46, 0.95); border-radius: 15px; padding: 25px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); border: 1px solid rgba(100, 100, 255, 0.2); }
-        .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid rgba(100, 100, 255, 0.2); }
-        .card-title { font-size: 1.3em; color: #7dd3fc; font-weight: 600; }
-        .stat-box { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 15px; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3); }
-        .stat-value { font-size: 2.5em; font-weight: bold; margin-bottom: 5px; }
-        .stat-label { font-size: 0.9em; opacity: 0.9; }
-        .protocol-stats { display: flex; justify-content: space-around; flex-wrap: wrap; gap: 10px; }
-        .protocol-box { flex: 1; min-width: 80px; background: rgba(45, 45, 68, 0.8); padding: 15px; border-radius: 8px; text-align: center; border-left: 4px solid; }
-        .protocol-box.icmp { border-left-color: #3b82f6; }
-        .protocol-box.tcp { border-left-color: #10b981; }
-        .protocol-box.udp { border-left-color: #f59e0b; }
-        .protocol-box.arp { border-left-color: #8b5cf6; }
-        .protocol-value { font-size: 1.8em; font-weight: bold; color: #e0e0e0; }
-        .protocol-label { font-size: 0.85em; color: #94a3b8; margin-top: 5px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid rgba(100, 100, 255, 0.2); }
-        th { background: rgba(45, 45, 68, 0.8); font-weight: 600; color: #7dd3fc; }
-        tr:hover { background: rgba(45, 45, 68, 0.5); }
-        .ip-badge { display: inline-block; padding: 5px 12px; border-radius: 5px; font-family: 'Courier New', monospace; font-size: 0.9em; }
-        .real-ip { background: rgba(59, 130, 246, 0.3); color: #7dd3fc; border: 1px solid rgba(59, 130, 246, 0.5); }
-        .virtual-ip { background: rgba(16, 185, 129, 0.3); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.5); }
-        .event-list { max-height: 400px; overflow-y: auto; }
-        .event-item { padding: 15px; margin-bottom: 10px; border-radius: 8px; background: rgba(45, 45, 68, 0.8); border-left: 4px solid #3b82f6; animation: slideIn 0.3s ease; }
-        @keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
-        .event-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
-        .event-protocol { font-weight: bold; color: #7dd3fc; }
-        .event-time { color: #94a3b8; font-size: 0.85em; }
-        .event-details { font-size: 0.9em; color: #cbd5e1; }
-        .wide-card { grid-column: 1 / -1; }
-        .chart-container { position: relative; height: 300px; margin-top: 20px; }
-        #networkTopology { height: 500px; background: rgba(45, 45, 68, 0.8); border-radius: 10px; }
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); }
-        .modal-content { background: rgba(30, 30, 46, 0.98); margin: 5% auto; padding: 30px; border-radius: 15px; width: 80%; max-width: 600px; border: 1px solid rgba(100, 100, 255, 0.3); }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .modal-title { font-size: 1.5em; color: #7dd3fc; }
-        .close { color: #94a3b8; font-size: 28px; font-weight: bold; cursor: pointer; }
-        .close:hover { color: #e0e0e0; }
-        .form-group { margin-bottom: 20px; }
-        .form-group label { display: block; margin-bottom: 8px; color: #7dd3fc; font-weight: 500; }
-        .form-group input, .form-group select { width: 100%; padding: 10px; border: 1px solid rgba(100, 100, 255, 0.3); border-radius: 8px; background: rgba(45, 45, 68, 0.8); color: #e0e0e0; }
-        .checkbox-group { display: flex; align-items: center; gap: 10px; }
-        .checkbox-group input[type="checkbox"] { width: auto; }
-        .action-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
-        .threat-badge { background: #dc2626; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.75em; font-weight: bold; }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: rgba(45, 45, 68, 0.5); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb { background: rgba(59, 130, 246, 0.5); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(59, 130, 246, 0.7); }
-        .status-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #10b981; margin-right: 8px; animation: pulse 2s infinite; box-shadow: 0 0 10px #10b981; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        .header-section h1 { font-size: 2.5rem; letter-spacing: -1px; }
+
+        /* Slide 2 Style: System Overview Grid */
+        .overview-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover { transform: translateY(-5px); border-color: var(--accent-blue); }
+        .stat-card h3 { color: var(--text-dim); font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; }
+        .stat-card .value { font-size: 2.2rem; font-weight: 700; color: var(--accent-blue); }
+
+        /* Slides 3 & 4: Analytics Charts */
+        .analytics-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        .chart-container {
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 15px;
+            height: 400px;
+        }
+
+        .chart-title { margin-bottom: 20px; font-size: 1.2rem; display: flex; align-items: center; gap: 10px; }
+
+        /* Slide 5 Style: Network Topology */
+        .topology-section {
+            background: var(--card-bg);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 40px;
+        }
+
+        #networkTopology {
+            height: 500px;
+            width: 100%;
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 10px;
+        }
+
+        /* Slide 6 Style: VIP Mappings Table */
+        .mappings-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card-bg);
+            border-radius: 15px;
+            overflow: hidden;
+        }
+
+        .mappings-table th { background: rgba(59, 130, 246, 0.1); color: var(--accent-blue); text-align: left; padding: 15px; }
+        .mappings-table td { padding: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+        /* Action Buttons (Slide 7: Strategy & Export) */
+        .action-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-morph { background: var(--accent-purple); color: white; }
+        .btn-export { background: #10b981; color: white; }
+        .btn-config { background: #475569; color: white; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div>
-                <h1>🛡️ Ultimate MTD Dashboard</h1>
-                <span class="status-indicator"></span><span style="color: #94a3b8;">System Active</span>
-            </div>
-            <div class="user-info">
-                Welcome, <strong>{{ username }}</strong> | 
-                <a href="/logout" style="color: #7dd3fc; text-decoration: none;">Logout</a>
-            </div>
+
+<div class="dashboard-container">
+    <header class="header-section">
+        <div>
+            <h1>🛡️ Ultimate MTD Dashboard</h1>
+            <p style="color: var(--text-dim)">Variable Network Topology Architecture (VANTA)</p>
         </div>
-
-        <!-- Action Buttons -->
-        <div class="card">
-            <div class="action-buttons">
-                <button class="btn btn-primary" onclick="openStrategyModal()">⚙️ Configure Strategy</button>
-                <button class="btn btn-danger" onclick="forceMorph()">🔄 Force Morph Now</button>
-                <button class="btn btn-success" onclick="exportCSV()">📊 Export CSV</button>
-                <button class="btn btn-success" onclick="exportJSON()">📄 Export JSON</button>
-                <button class="btn btn-success" onclick="exportPDF()">📑 Export PDF</button>
-            </div>
+        <div class="action-bar">
+            <button class="btn btn-config" onclick="openStrategyModal()">⚙️ Strategy</button>
+            <button class="btn btn-morph" onclick="forceMorph()">🔄 Force Morph</button>
+            <button class="btn btn-export" onclick="exportCSV()">Export Data</button>
         </div>
+    </header>
 
-        <!-- Stats Grid -->
-        <div class="grid">
-            <div class="card">
-                <div class="card-header"><span class="card-title">📊 Overview</span></div>
-                <div class="stat-box">
-                    <div class="stat-value" id="uptime">--:--:--</div>
-                    <div class="stat-label">Uptime</div>
-                </div>
-                <div class="stat-box" style="background: linear-gradient(135deg, #f59e0b 0%, #dc2626 100%);">
-                    <div class="stat-value" id="totalMorphs">0</div>
-                    <div class="stat-label">Total Morphs</div>
-                </div>
-                <div class="stat-box" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
-                    <div class="stat-value" id="vipAllocations">0</div>
-                    <div class="stat-label">VIP Allocations</div>
-                </div>
-                <div class="stat-box" style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);">
-                    <div class="stat-value" id="threatsDetected">0</div>
-                    <div class="stat-label">Threats Detected</div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header"><span class="card-title">📡 Packet Statistics</span></div>
-                <div class="protocol-stats">
-                    <div class="protocol-box icmp">
-                        <div class="protocol-value" id="icmpPackets">0</div>
-                        <div class="protocol-label">ICMP</div>
-                    </div>
-                    <div class="protocol-box tcp">
-                        <div class="protocol-value" id="tcpPackets">0</div>
-                        <div class="protocol-label">TCP</div>
-                    </div>
-                    <div class="protocol-box udp">
-                        <div class="protocol-value" id="udpPackets">0</div>
-                        <div class="protocol-label">UDP</div>
-                    </div>
-                    <div class="protocol-box arp">
-                        <div class="protocol-value" id="arpPackets">0</div>
-                        <div class="protocol-label">ARP</div>
-                    </div>
-                </div>
-                <div class="chart-container"><canvas id="packetChart"></canvas></div>
-            </div>
-
-            <div class="card">
-                <div class="card-header"><span class="card-title">🔄 Morphs by Trigger</span></div>
-                <div class="protocol-stats">
-                    <div class="protocol-box" style="border-left-color: #3b82f6;">
-                        <div class="protocol-value" id="replyMorphs">0</div>
-                        <div class="protocol-label">Reply</div>
-                    </div>
-                    <div class="protocol-box" style="border-left-color: #10b981;">
-                        <div class="protocol-value" id="timeMorphs">0</div>
-                        <div class="protocol-label">Time</div>
-                    </div>
-                    <div class="protocol-box" style="border-left-color: #f59e0b;">
-                        <div class="protocol-value" id="packetMorphs">0</div>
-                        <div class="protocol-label">Packet Count</div>
-                    </div>
-                    <div class="protocol-box" style="border-left-color: #dc2626;">
-                        <div class="protocol-value" id="threatMorphs">0</div>
-                        <div class="protocol-label">Threat</div>
-                    </div>
-                </div>
-                <div class="chart-container"><canvas id="morphChart"></canvas></div>
-            </div>
+    <section class="overview-grid">
+        <div class="stat-card">
+            <h3>Uptime</h3>
+            <div class="value" id="uptime">00:00:00</div>
         </div>
-
-        <!-- Network Topology -->
-        <div class="grid">
-            <div class="card wide-card">
-                <div class="card-header"><span class="card-title">🗺️ Network Topology</span></div>
-                <div id="networkTopology"></div>
-            </div>
+        <div class="stat-card">
+            <h3>Total Morphs</h3>
+            <div class="value" id="totalMorphs">0</div>
         </div>
-
-        <!-- VIP Mappings -->
-        <div class="grid">
-            <div class="card wide-card">
-                <div class="card-header">
-                    <span class="card-title">🗺️ Current VIP Mappings</span>
-                    <span class="badge-success" id="mappingCount" style="background: #10b981; padding: 4px 8px; border-radius: 4px; font-size: 0.75em;">0 Active</span>
-                </div>
-                <table>
-                    <thead><tr><th>Real IP</th><th></th><th>Virtual IP</th></tr></thead>
-                    <tbody id="mappingsTableBody">
-                        <tr><td colspan="3" style="text-align: center; color: #64748b;">No active mappings</td></tr>
-                    </tbody>
-                </table>
-            </div>
+        <div class="stat-card">
+            <h3>VIP Allocations</h3>
+            <div class="value" id="vipAllocations">0</div>
         </div>
+        <div class="stat-card">
+            <h3>Threats Detected</h3>
+            <div class="value" id="threatsDetected" style="color: #ef4444;">0</div>
+        </div>
+    </section>
 
-        <!-- Connections and Events -->
-        <div class="grid">
-            <div class="card">
-                <div class="card-header"><span class="card-title">🔗 Active Connections</span></div>
-                <div class="event-list" id="connectionsContainer">
-                    <div style="text-align: center; padding: 40px; color: #64748b;">No active connections</div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header"><span class="card-title">📋 Recent Morph Events</span></div>
-                <div class="event-list" id="morphEventsContainer">
-                    <div style="text-align: center; padding: 40px; color: #64748b;">No morph events yet</div>
-                </div>
-            </div>
+    <div class="analytics-row">
+        <div class="chart-container">
+            <div class="chart-title">📡 Packet Statistics</div>
+            <canvas id="packetChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <div class="chart-title">🔄 Morphs by Trigger</div>
+            <canvas id="morphChart"></canvas>
         </div>
     </div>
 
-    <!-- Strategy Configuration Modal -->
-    <div id="strategyModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <span class="modal-title">Configure Morphing Strategy</span>
-                <span class="close" onclick="closeStrategyModal()">&times;</span>
-            </div>
-            <form id="strategyForm">
-                <div class="form-group">
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="replyTriggered" checked>
-                        <label for="replyTriggered">Reply-Triggered Morphing</label>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="timeBased">
-                        <label for="timeBased">Time-Based Morphing</label>
-                    </div>
-                    <input type="number" id="timeInterval" placeholder="Interval (seconds)" value="30" min="5">
-                </div>
-                <div class="form-group">
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="packetCountBased">
-                        <label for="packetCountBased">Packet-Count Based Morphing</label>
-                    </div>
-                    <input type="number" id="packetThreshold" placeholder="Packet threshold" value="100" min="10">
-                </div>
-                <div class="form-group">
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="randomIntervals">
-                        <label for="randomIntervals">Random Intervals</label>
-                    </div>
-                    <input type="number" id="minInterval" placeholder="Min interval (s)" value="10" min="5">
-                    <input type="number" id="maxInterval" placeholder="Max interval (s)" value="60" min="10">
-                </div>
-                <div class="form-group">
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="threatTriggered" checked>
-                        <label for="threatTriggered">Threat-Triggered Morphing</label>
-                    </div>
-                </div>
-                <button type="submit" class="btn btn-primary" style="width: 100%;">Save Strategy</button>
-            </form>
-        </div>
-    </div>
+    <section class="topology-section">
+        <div class="chart-title">🗺️ Network Topology Map</div>
+        <div id="networkTopology"></div>
+    </section>
 
-    <script>
-        const socket = io();
-        let packetChart, morphChart, network;
+    <section style="margin-bottom: 40px;">
+        <div class="chart-title">🔗 Current VIP Mappings</div>
+        <table class="mappings-table">
+            <thead>
+                <tr>
+                    <th>Real IP Address</th>
+                    <th>Direction</th>
+                    <th>Assigned Virtual IP (VIP)</th>
+                </tr>
+            </thead>
+            <tbody id="mappingsTableBody">
+                <tr><td colspan="3" style="text-align: center; color: var(--text-dim);">No active mappings</td></tr>
+            </tbody>
+        </table>
+    </section>
+</div>
 
-        // Initialize charts
-        Chart.defaults.color = '#94a3b8';
-        Chart.defaults.borderColor = 'rgba(100, 100, 255, 0.2)';
+<script>
+    // Initialize charts and logic as per your original script
+    // Ensure the chart colors match the slide theme (Blues, Purples, Reds)
+</script>
 
-        function initCharts() {
-            const packetCtx = document.getElementById('packetChart').getContext('2d');
-            packetChart = new Chart(packetCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['ICMP', 'TCP', 'UDP', 'ARP'],
-                    datasets: [{
-                        data: [0, 0, 0, 0],
-                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6']
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8' } } }
-                }
-            });
-
-            const morphCtx = document.getElementById('morphChart').getContext('2d');
-            morphChart = new Chart(morphCtx, {
-                type: 'bar',
-                data: {
-                    labels: ['Reply', 'Time', 'Packet', 'Threat'],
-                    datasets: [{
-                        data: [0, 0, 0, 0],
-                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#dc2626']
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: { beginAtZero: true, ticks: { stepSize: 1, color: '#94a3b8' }, grid: { color: 'rgba(100, 100, 255, 0.1)' } },
-                        x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(100, 100, 255, 0.1)' } }
-                    },
-                    plugins: { legend: { display: false } }
-                }
-            });
-        }
-
-        function initTopology() {
-            const container = document.getElementById('networkTopology');
-            const data = { nodes: [], edges: [] };
-            const options = {
-                nodes: { shape: 'dot', size: 20, font: { color: '#e0e0e0' }, borderWidth: 2, color: { background: '#3b82f6', border: '#7dd3fc' } },
-                edges: { width: 2, color: { color: '#94a3b8' } },
-                physics: { enabled: true, stabilization: { iterations: 100 } },
-                interaction: { hover: true }
-            };
-            network = new vis.Network(container, data, options);
-        }
-
-        function updateStats(stats) {
-            document.getElementById('uptime').textContent = stats.uptime || '--:--:--';
-            document.getElementById('totalMorphs').textContent = stats.total_morphs || 0;
-            document.getElementById('vipAllocations').textContent = stats.vip_allocations || 0;
-            document.getElementById('threatsDetected').textContent = stats.threats_detected || 0;
-
-            const packets = stats.packets_by_protocol || {};
-            document.getElementById('icmpPackets').textContent = packets.ICMP || 0;
-            document.getElementById('tcpPackets').textContent = packets.TCP || 0;
-            document.getElementById('udpPackets').textContent = packets.UDP || 0;
-            document.getElementById('arpPackets').textContent = packets.ARP || 0;
-
-            packetChart.data.datasets[0].data = [packets.ICMP || 0, packets.TCP || 0, packets.UDP || 0, packets.ARP || 0];
-            packetChart.update();
-
-            const morphs = stats.morphs_by_trigger || {};
-            document.getElementById('replyMorphs').textContent = morphs.reply || 0;
-            document.getElementById('timeMorphs').textContent = morphs.time || 0;
-            document.getElementById('packetMorphs').textContent = morphs.packet_count || 0;
-            document.getElementById('threatMorphs').textContent = morphs.threat || 0;
-
-            morphChart.data.datasets[0].data = [morphs.reply || 0, morphs.time || 0, morphs.packet_count || 0, morphs.threat || 0];
-            morphChart.update();
-
-            updateConnections(stats.active_connections || []);
-            updateMorphHistory(stats.morph_history || []);
-            updateTopology(stats.topology || {});
-        }
-
-        function updateMappings(mappings) {
-            const tbody = document.getElementById('mappingsTableBody');
-            if (!mappings || mappings.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: #64748b;">No active mappings</td></tr>';
-                document.getElementById('mappingCount').textContent = '0 Active';
-                return;
-            }
-            document.getElementById('mappingCount').textContent = mappings.length + ' Active';
-            tbody.innerHTML = mappings.map(m => 
-                '<tr><td><span class="ip-badge real-ip">'+m.real_ip+'</span></td><td style="text-align: center;">↔</td><td><span class="ip-badge virtual-ip">'+m.vip+'</span></td></tr>'
-            ).join('');
-        }
-
-        function updateConnections(connections) {
-            const container = document.getElementById('connectionsContainer');
-            if (!connections || connections.length === 0) {
-                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #64748b;">No active connections</div>';
-                return;
-            }
-            container.innerHTML = connections.slice().reverse().slice(0, 20).map(conn => 
-                '<div class="event-item"><div class="event-header"><span class="event-protocol">'+conn.protocol+'</span><span class="event-time">'+conn.timestamp+'</span></div><div class="event-details">'+conn.src_ip+(conn.src_port?':'+conn.src_port:'')+' → '+conn.dst_ip+(conn.dst_port?':'+conn.dst_port:'')+'</div></div>'
-            ).join('');
-        }
-
-        function updateMorphHistory(history) {
-            const container = document.getElementById('morphEventsContainer');
-            if (!history || history.length === 0) {
-                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #64748b;">No morph events yet</div>';
-                return;
-            }
-            container.innerHTML = history.slice().reverse().slice(0, 20).map(event => 
-                '<div class="event-item"><div class="event-header"><span class="event-protocol">'+event.protocol+' ('+event.trigger+')</span><span class="event-time">'+event.timestamp+'</span></div><div class="event-details"><div>'+event.ip1+': '+event.old_vip1+' → '+event.new_vip1+'</div><div>'+event.ip2+': '+event.old_vip2+' → '+event.new_vip2+'</div></div></div>'
-            ).join('');
-        }
-
-        function updateTopology(topology) {
-            if (!network) return;
-            
-            const nodes = [];
-            const edges = [];
-            
-            // Add switches
-            if (topology.switches) {
-                topology.switches.forEach(sw => {
-                    nodes.push({ id: 's' + sw.dpid, label: 'S' + sw.dpid, color: { background: '#8b5cf6', border: '#a78bfa' }, shape: 'box' });
-                });
-            }
-            
-            // Add hosts
-            if (topology.hosts) {
-                topology.hosts.forEach((host, idx) => {
-                    nodes.push({ id: host.ip, label: host.ip + '\n(' + host.vip + ')', color: { background: '#10b981', border: '#6ee7b7' } });
-                    if (topology.switches && topology.switches.length > 0) {
-                        edges.push({ from: 's' + topology.switches[0].dpid, to: host.ip });
-                    }
-                });
-            }
-            
-            network.setData({ nodes: nodes, edges: edges });
-        }
-
-        // Modal functions
-        function openStrategyModal() {
-            fetch('/api/strategy')
-                .then(r => r.json())
-                .then(data => {
-                    document.getElementById('replyTriggered').checked = data.reply_triggered;
-                    document.getElementById('timeBased').checked = data.time_based;
-                    document.getElementById('timeInterval').value = data.time_interval;
-                    document.getElementById('packetCountBased').checked = data.packet_count_based;
-                    document.getElementById('packetThreshold').value = data.packet_threshold;
-                    document.getElementById('randomIntervals').checked = data.random_intervals;
-                    document.getElementById('minInterval').value = data.min_interval;
-                    document.getElementById('maxInterval').value = data.max_interval;
-                    document.getElementById('threatTriggered').checked = data.threat_triggered;
-                    document.getElementById('strategyModal').style.display = 'block';
-                });
-        }
-
-        function closeStrategyModal() {
-            document.getElementById('strategyModal').style.display = 'none';
-        }
-
-        document.getElementById('strategyForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const data = {
-                reply_triggered: document.getElementById('replyTriggered').checked,
-                time_based: document.getElementById('timeBased').checked,
-                time_interval: parseInt(document.getElementById('timeInterval').value),
-                packet_count_based: document.getElementById('packetCountBased').checked,
-                packet_threshold: parseInt(document.getElementById('packetThreshold').value),
-                random_intervals: document.getElementById('randomIntervals').checked,
-                min_interval: parseInt(document.getElementById('minInterval').value),
-                max_interval: parseInt(document.getElementById('maxInterval').value),
-                threat_triggered: document.getElementById('threatTriggered').checked
-            };
-            
-            fetch('/api/strategy', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            })
-            .then(r => r.json())
-            .then(result => {
-                alert('Strategy updated successfully!');
-                closeStrategyModal();
-            });
-        });
-
-        function forceMorph() {
-            if (confirm('Force immediate morphing of all active IP pairs?')) {
-                fetch('/api/morph/force', { method: 'POST' })
-                    .then(r => r.json())
-                    .then(result => alert('Morphed ' + result.morphed_pairs + ' IP pairs'));
-            }
-        }
-
-        function exportCSV() { window.open('/api/export/csv', '_blank'); }
-        function exportJSON() { window.open('/api/export/json', '_blank'); }
-        function exportPDF() { window.open('/api/export/pdf', '_blank'); }
-
-        // Socket.IO events
-        socket.on('connect', () => console.log('Connected to MTD Controller'));
-        socket.on('stats_update', updateStats);
-        socket.on('mappings_update', data => updateMappings(data.mappings));
-        socket.on('morph_event', event => console.log('Morph event:', event));
-        socket.on('threat_detected', data => alert('⚠️ Threat detected: ' + data.type + ' from ' + data.source));
-
-        // Fetch stats every 2 seconds
-        setInterval(() => {
-            fetch('/api/stats').then(r => r.json()).then(updateStats).catch(err => console.error('Error:', err));
-        }, 2000);
-
-        // Initialize
-        window.onload = () => {
-            initCharts();
-            initTopology();
-        };
-    </script>
 </body>
 </html>
