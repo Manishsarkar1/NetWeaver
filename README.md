@@ -81,14 +81,14 @@ All active work is centered on `27/02/26/`.
 pip install ryu rich flask flask-socketio flask-login eventlet reportlab pandas scapy matplotlib seaborn psutil
 
 # 2) Start controller
-ryu-manager 27/02/26/ultimate_mtd_controller.py
+ryu-manager ultimate_mtd_controller.py
 
 # 3) Start Mininet (new terminal)
 sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 
 # 4) Open dashboard
-# http://localhost:5000
-# default: admin / mtd2024
+http://localhost:5000
+default: admin / mtd2024
 ```
 
 ## API Surface
@@ -112,6 +112,5 @@ sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 - Performance: RTT/throughput overhead, CPU/memory usage, flow churn.
 
 ## Notes
-- Keep development focused on `27/02/26` to avoid variant drift.
 - `benchmark_suite.py` assumes Linux/Mininet tools (`ping -c`, `iperf`).
 - VANTA objective: force attacker reconnaissance data to expire faster than exploitation cycles.
