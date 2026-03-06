@@ -1,23 +1,4 @@
 #!/usr/bin/env python3
-"""
-MTD ATTACK SIMULATION SUITE
-Comprehensive attack scenarios for testing MTD effectiveness
-
-USAGE:
-    python attack_simulator.py --attack <attack_type> --target <ip>
-    
-Available attacks:
-    - port_scan: Simulates Nmap-style port scanning
-    - syn_flood: TCP SYN flood DDoS attack
-    - ping_flood: ICMP flood attack
-    - reconnaissance: Network mapping
-    - brute_force: Login attempt simulation
-    - all: Run all attack scenarios
-
-REQUIREMENTS:
-    pip install scapy argparse rich
-"""
-
 from scapy.all import *
 import argparse
 import time
