@@ -1,0 +1,13 @@
+README.md
+# .gitignore
+#ignore the readme file
+README.md
+#ignore the project_overview.md file
+project_overview.md
+#ignore the assets folder
+assets/
+_pycache__/
+#ignore all .md files
+*.md
+#ignore all .txt files
+*.txt
