@@ -30,7 +30,7 @@ External reconnaissance should become stale almost immediately.
 ```mermaid
 flowchart TB
     A["External Attacker"] --> B["OpenFlow Switch / OVS"]
-    B --> C["VANTA Controller \n Ryu + Strategy Engine"]
+    B --> C["VANTA Controller\nRyu + Strategy Engine"]
     C --> D["VIP Mapper\nReal IP <-> Virtual IP"]
     C --> E["Threat Detector\nScan / Probe Patterns"]
     C --> F["Web Dashboard\nFlask + Socket.IO"]
@@ -44,25 +44,20 @@ flowchart TB
     class A,B,F,G edge;
 ```
 
-## How It Works
-1. Hosts keep stable real identities internally.
-2. Controller assigns attacker-facing VIPs.
-3. Recon behavior is detected (for example rapid unique-port probes).
-4. When scan activity goes idle (for example ~1 second), VIP mappings are shuffled.
-5. Old attacker intel is invalidated; dashboard reflects the new map in real time.
+## Documentation
+- [Quick Start Guide](quick_start.md)
+- [Project Overview](project_overview.md)
 
 ## Project Scope
-Current active files are in the repository root.
-
 ```text
 .
-+-- ultimate_mtd_controller.py   # Main Ryu + Flask controller
-+-- attack_simulator.py          # Adversarial scenarios
-+-- benchmark_suite.py           # Performance evaluation
-+-- quick_start.md               # Run steps
-+-- project_overview.md          # Research framing
-+-- requirements.txt             # Python dependencies
-+-- start_dashboard.sh           # Helper startup script
++-- ultimate_mtd_controller.py
++-- attack_simulator.py
++-- benchmark_suite.py
++-- quick_start.md
++-- project_overview.md
++-- requirements.txt
++-- start_dashboard.sh
 +-- README.md
 ```
 
@@ -78,7 +73,8 @@ Current active files are in the repository root.
 ## Quick Start
 ```bash
 # 1) Install dependencies
-pip install ryu rich flask flask-socketio flask-login eventlet reportlab pandas scapy matplotlib seaborn psutil
+pip install -r requirements.txt
+pip install flask-login reportlab pandas scapy matplotlib seaborn psutil
 
 # 2) Start controller
 ryu-manager ultimate_mtd_controller.py
@@ -87,8 +83,8 @@ ryu-manager ultimate_mtd_controller.py
 sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 
 # 4) Open dashboard
-http://localhost:5000
-default: admin / mtd2024
+# http://localhost:5000
+# default login: admin / mtd2024
 ```
 
 ## API Surface
