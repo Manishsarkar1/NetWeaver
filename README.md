@@ -21,7 +21,7 @@ Adaptive SDN-based Moving Target Defense (MTD) focused on invalidating attacker 
 ## Why VANTA
 External reconnaissance should become stale almost immediately.
 
-| Phase | Device 1 | Vulnerable Device |
+| Phase | Device 1 | Device 2 (Vulnerable Device) |
 |---|---|---|
 | Scan output (t0) | `192.168.13.2` | `192.168.13.66` |
 | After morph (t0 + ~1s) | `192.168.13.56` | `192.168.13.45` |
@@ -51,19 +51,19 @@ flowchart TB
 4. When scan activity goes idle (for example ~1 second), VIP mappings are shuffled.
 5. Old attacker intel is invalidated; dashboard reflects the new map in real time.
 
-## Project Scope
-Current active files are in the repository root.
+## Project Scope (Primary Variant)
+All active work is centered on `27/02/26/`.
 
 ```text
-.
+27/02/26/
 +-- ultimate_mtd_controller.py   # Main Ryu + Flask controller
 +-- attack_simulator.py          # Adversarial scenarios
 +-- benchmark_suite.py           # Performance evaluation
 +-- quick_start.md               # Run steps
 +-- project_overview.md          # Research framing
-+-- requirements.txt             # Python dependencies
-+-- start_dashboard.sh           # Helper startup script
-+-- README.md
++-- templates/
+    +-- login.html
+    +-- dashboard_ultimate.html
 ```
 
 ## Core Capabilities
@@ -103,9 +103,9 @@ default: admin / mtd2024
 | `/api/export/pdf` | `GET` | Download PDF report |
 
 ## Experiment Checklist
-- `python attack_simulator.py --attack port_scan --target 10.0.0.2`
-- `python benchmark_suite.py --test latency`
-- `python benchmark_suite.py --test strategy_comparison`
+- `python 27/02/26/attack_simulator.py --attack port_scan --target 10.0.0.2`
+- `python 27/02/26/benchmark_suite.py --test latency`
+- `python 27/02/26/benchmark_suite.py --test strategy_comparison`
 
 ## Metrics to Report
 - Security: attack success reduction, scan completeness degradation, detection-to-morph delay.
