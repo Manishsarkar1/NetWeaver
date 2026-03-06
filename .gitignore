@@ -11,3 +11,12 @@ _pycache__/
 *.md
 #ignore all .txt files
 *.txt
+#even after doing this github wont hide the files that are already commited, so we need to remove them from the git index
+git rm --cached README.md
+git rm --cached project_overview.md
+git rm --cached -r assets/
+git rm --cached -r __pycache__/
+git rm --cached *.md
+git rm --cached *.txt
+#after doing this we need to commit the changes
+# git commit -m "Updated .gitignore to ignore specific files and folders"
