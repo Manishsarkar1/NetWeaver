@@ -15,108 +15,103 @@
   <img src="https://img.shields.io/badge/Status-Research%20Prototype-f59e0b?style=for-the-badge" alt="Status badge" />
 </p>
 
-<p align="center">
-  <img src="https://komarev.com/ghpvc/?username=vanta-project&label=README%20views&color=00e5ff&style=flat-square" alt="README views" />
-</p>
-
 # VANTA
-Adaptive SDN-based Moving Target Defense (MTD) for scan disruption and attack resistance.
-## What VANTA Does
-VANTA is designed to break attacker reconnaissance.  
-When an external scanner maps your network, the discovered IP-to-device mapping quickly becomes invalid because virtual IPs are shuffled by the SDN controller.
+Adaptive SDN-based Moving Target Defense (MTD) focused on invalidating attacker scan results through fast virtual IP (VIP) morphing.
 
-Example behavior:
-- Before scan result:
-  - `Device-1 -> 192.168.13.2`
-  - `Vulnerable-Device -> 192.168.13.66`
-- After scan completes (about 1 second of probe inactivity):
-  - `Device-1 -> 192.168.13.56`
-  - `Vulnerable-Device -> 192.168.13.45`
+## Why VANTA
+External reconnaissance should become stale almost immediately.
 
-## Project Variant in Scope
-This repository contains multiple experiments, but the primary research-grade variant is:
-- `27/02/26/ultimate_mtd_controller.py`
-- `27/02/26/attack_simulator.py`
-- `27/02/26/benchmark_suite.py`
-- `27/02/26/templates/login.html`
-- `27/02/26/templates/dashboard_ultimate.html`
+| Phase | Device 1 | Vulnerable Device |
+|---|---|---|
+| Scan output (t0) | `192.168.13.2` | `192.168.13.66` |
+| After morph (t0 + ~1s) | `192.168.13.56` | `192.168.13.45` |
 
-## Core Features
-- SDN controller with OpenFlow 1.3 (Ryu).
-- Virtual IP (VIP) allocation and rotation.
-- Multiple morphing strategies:
-  - Reply-triggered
-  - Time-based
-  - Packet-count-based
-  - Threat-triggered
-  - Manual force morph
-- Threat detection (port-scan focused).
-- Real-time dashboard (Flask + Socket.IO).
-- Session auth (Flask-Login).
-- Data export:
-  - CSV
-  - JSON
-  - PDF (when reportlab is installed)
+## Minimal Architecture
+```mermaid
+flowchart TB
+    A["External Attacker"] --> B["OpenFlow Switch / OVS"]
+    B --> C["VANTA Controller\nRyu + Strategy Engine"]
+    C --> D["VIP Mapper\nReal IP <-> Virtual IP"]
+    C --> E["Threat Detector\nScan / Probe Patterns"]
+    C --> F["Web Dashboard\nFlask + Socket.IO"]
+    D --> G["Protected Hosts"]
+    E --> C
 
-## How the System Works
-1. Hosts communicate through SDN switch(es) connected to the controller.
-2. Controller maps stable real host identities to attacker-facing virtual IPs.
-3. Traffic and behavior are tracked per protocol and per source.
-4. Recon indicators (e.g., rapid unique-port touching) trigger defensive response.
-5. VIP mappings are remorphed and new flows are installed.
-6. Dashboard updates in real time via WebSocket events.
+    classDef core fill:#0e1f4d,stroke:#00e5ff,color:#ffffff,stroke-width:1px;
+    classDef edge fill:#0a152f,stroke:#3b82f6,color:#dbeafe,stroke-width:1px;
 
-## File Guide (27/02/26)
-- `ultimate_mtd_controller.py`
-  - Main Ryu + Flask app.
-  - Strategy engine, threat detector, mapping state, APIs, websocket events.
-- `attack_simulator.py`
-  - Adversarial test generator (`port_scan`, `syn_flood`, `ping_flood`, `reconnaissance`, `brute_force`, `all`).
-- `benchmark_suite.py`
-  - Performance testing (`latency`, `throughput`, `cpu`, `memory`, `flow_table`, `strategy_comparison`, `all`).
-- `quick_start.md`
-  - Run sequence and experiment recipes.
-- `project_overview.md`
-  - Full minor-project structure, objectives, and research framing.
+    class C,D,E core;
+    class A,B,F,G edge;
+```
 
-## API Surface (Controller)
-- `GET /api/stats` -> runtime metrics and event history.
-- `GET /api/mappings` -> current real-to-virtual mappings.
-- `GET|POST /api/strategy` -> read/update strategy flags and thresholds.
-- `POST /api/morph/force` -> manual mapping shuffle.
-- `GET /api/export/csv` -> morph history CSV.
-- `GET /api/export/json` -> full stats JSON.
-- `GET /api/export/pdf` -> report PDF (if enabled).
+## How It Works
+1. Hosts keep stable real identities internally.
+2. Controller assigns attacker-facing VIPs.
+3. Recon behavior is detected (for example rapid unique-port probes).
+4. When scan activity goes idle (for example ~1 second), VIP mappings are shuffled.
+5. Old attacker intel is invalidated; dashboard reflects the new map in real time.
+
+## Project Scope (Primary Variant)
+All active work is centered on `27/02/26/`.
+
+```text
+27/02/26/
++-- ultimate_mtd_controller.py   # Main Ryu + Flask controller
++-- attack_simulator.py          # Adversarial scenarios
++-- benchmark_suite.py           # Performance evaluation
++-- quick_start.md               # Run steps
++-- project_overview.md          # Research framing
++-- templates/
+    +-- login.html
+    +-- dashboard_ultimate.html
+```
+
+## Core Capabilities
+- OpenFlow 1.3 SDN control plane (Ryu).
+- VIP allocation and morphing.
+- Strategy modes: reply, time, packet-count, threat-triggered, manual.
+- Port-scan-oriented threat detection.
+- Real-time dashboard updates via WebSocket.
+- Authentication and session handling.
+- CSV/JSON/PDF exports.
 
 ## Quick Start
-1. Install dependencies:
-   - `pip install ryu rich flask flask-socketio flask-login eventlet reportlab pandas scapy matplotlib seaborn psutil`
-2. Start controller:
-   - `ryu-manager 27/02/26/ultimate_mtd_controller.py`
-3. Start Mininet:
-   - `sudo mn --controller=remote,port=6653 --topo=single,3 --mac`
-4. Open dashboard:
-   - `http://localhost:5000`
-   - default: `admin / mtd2024`
-5. Trigger traffic or attack simulation:
-   - `python 27/02/26/attack_simulator.py --attack port_scan --target 10.0.0.2`
+```bash
+# 1) Install dependencies
+pip install ryu rich flask flask-socketio flask-login eventlet reportlab pandas scapy matplotlib seaborn psutil
 
-## Research Metrics to Report
-- Security:
-  - Attack success reduction
-  - Scan completeness degradation
-  - Detection-to-morph latency
-- Performance:
-  - RTT overhead
-  - Throughput impact
-  - Controller CPU/memory
-  - Flow churn rate
+# 2) Start controller
+ryu-manager 27/02/26/ultimate_mtd_controller.py
 
-## Known Notes
-- This repo has multiple generations; keep experiments centered on `27/02/26`.
-- `attack_simulator.py` may need a small import cleanup (`socket`) in some environments.
-- `benchmark_suite.py` assumes Linux-style tooling (`ping -c`, `iperf`) for Mininet workflows.
+# 3) Start Mininet (new terminal)
+sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 
-## Project Name Expansion
-**VANTA = Variable Network Topology Architecture**  
-Goal: make recon results stale fast enough that attackers cannot reliably weaponize scan output.
+# 4) Open dashboard
+# http://localhost:5000
+# default: admin / mtd2024
+```
+
+## API Surface
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/stats` | `GET` | Runtime metrics and event history |
+| `/api/mappings` | `GET` | Current real-to-VIP map |
+| `/api/strategy` | `GET/POST` | Read or update strategy config |
+| `/api/morph/force` | `POST` | Trigger immediate morph |
+| `/api/export/csv` | `GET` | Download morph history |
+| `/api/export/json` | `GET` | Download full stats |
+| `/api/export/pdf` | `GET` | Download PDF report |
+
+## Experiment Checklist
+- `python 27/02/26/attack_simulator.py --attack port_scan --target 10.0.0.2`
+- `python 27/02/26/benchmark_suite.py --test latency`
+- `python 27/02/26/benchmark_suite.py --test strategy_comparison`
+
+## Metrics to Report
+- Security: attack success reduction, scan completeness degradation, detection-to-morph delay.
+- Performance: RTT/throughput overhead, CPU/memory usage, flow churn.
+
+## Notes
+- Keep development focused on `27/02/26` to avoid variant drift.
+- `benchmark_suite.py` assumes Linux/Mininet tools (`ping -c`, `iperf`).
+- VANTA objective: force attacker reconnaissance data to expire faster than exploitation cycles.
