@@ -30,7 +30,7 @@ External reconnaissance should become stale almost immediately.
 ```mermaid
 flowchart TB
     A["External Attacker"] --> B["OpenFlow Switch / OVS"]
-    B --> C["VANTA Controller\nRyu + Strategy Engine"]
+    B --> C["VANTA Controller \n Ryu + Strategy Engine"]
     C --> D["VIP Mapper\nReal IP <-> Virtual IP"]
     C --> E["Threat Detector\nScan / Probe Patterns"]
     C --> F["Web Dashboard\nFlask + Socket.IO"]
