@@ -1,11 +1,26 @@
-# VANTA
-**Variable Network Topology Architecture**  
-Adaptive SDN-based Moving Target Defense (MTD) for scan disruption and attack resistance.
-
 <p align="center">
-  <img src="assets/pacman-border-loop.svg" alt="Neon Pac-Man eats the border while a builder redraws it in a loop" width="920" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&height=220&color=0:0b1022,35:0e1f4d,100:00e5ff&text=VANTA&fontColor=ffffff&fontSize=64&fontAlignY=38&desc=Variable%20Network%20Topology%20Architecture&descAlignY=60&animation=fadeIn" alt="VANTA banner" />
 </p>
 
+<p align="center">
+  <a href="https://github.com/">
+    <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=21&pause=1300&color=00F5FF&center=true&vCenter=true&width=980&lines=Adaptive+SDN-based+Moving+Target+Defense;Scan+Detected+%E2%86%92+VIP+Morph+Triggered;Recon+Data+Expires+Fast" alt="Typing animation" />
+  </a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/SDN-OpenFlow%201.3-00c2ff?style=for-the-badge&logo=openvswitch&logoColor=white" alt="OpenFlow badge" />
+  <img src="https://img.shields.io/badge/Controller-Ryu-0ea5e9?style=for-the-badge&logo=python&logoColor=white" alt="Ryu badge" />
+  <img src="https://img.shields.io/badge/Defense-Moving%20Target-10b981?style=for-the-badge" alt="MTD badge" />
+  <img src="https://img.shields.io/badge/Status-Research%20Prototype-f59e0b?style=for-the-badge" alt="Status badge" />
+</p>
+
+<p align="center">
+  <img src="https://komarev.com/ghpvc/?username=vanta-project&label=README%20views&color=00e5ff&style=flat-square" alt="README views" />
+</p>
+
+# VANTA
+Adaptive SDN-based Moving Target Defense (MTD) for scan disruption and attack resistance.
 ## What VANTA Does
 VANTA is designed to break attacker reconnaissance.  
 When an external scanner maps your network, the discovered IP-to-device mapping quickly becomes invalid because virtual IPs are shuffled by the SDN controller.
