@@ -112,4 +112,4 @@ sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 - VANTA objective: force attacker reconnaissance data to expire faster than exploitation cycles.
 
 ## License
-- [Apache 2.0](https://github.com/Manishsarkar1/VANTA-Variable-Network-Topology-Architecture-/tree/prime?tab=Apache-2.0-1-ov-file)
+- [Apache 2.0](https://github.com/Manishsarkar1/VANTA-Variable-Network-Topology-Architecture-/blob/prime/LICENSE)
