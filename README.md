@@ -74,7 +74,18 @@ flowchart TB
 ```bash
 # 1) Install dependencies
 pip install -r requirements.txt
-pip install flask-login reportlab pandas scapy matplotlib seaborn psutil
+pip install pandas scapy matplotlib seaborn psutil
+
+# Optional: override demo credentials for safer local runs
+# Linux/macOS:
+export VANTA_SECRET_KEY='replace-this-secret'
+export VANTA_ADMIN_USERNAME='admin'
+export VANTA_ADMIN_PASSWORD='replace-this-password'
+
+# Windows PowerShell:
+$env:VANTA_SECRET_KEY='replace-this-secret'
+$env:VANTA_ADMIN_USERNAME='admin'
+$env:VANTA_ADMIN_PASSWORD='replace-this-password'
 
 # 2) Start controller
 ryu-manager ultimate_mtd_controller.py
@@ -102,6 +113,7 @@ sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 - `python attack_simulator.py --attack port_scan --target 10.0.0.2`
 - `python benchmark_suite.py --test latency`
 - `python benchmark_suite.py --test strategy_comparison`
+- `python -m unittest discover -s tests -v`
 
 ## Metrics to Report
 - Security: attack success reduction, scan completeness degradation, detection-to-morph delay.

@@ -1,0 +1,146 @@
+{
+  "generated_at": "2026-03-27T18:40:11.908523+00:00",
+  "repository": "C:\\Users\\sarka\\OneDrive\\Desktop\\minor\\VANTA-Variable-Network-Topology-Architecture-",
+  "tests": {
+    "command": "C:\\Users\\sarka\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m unittest discover -s tests -v",
+    "returncode": 0,
+    "passed": true,
+    "stdout": "",
+    "stderr": "test_build_user_store_uses_runtime_credentials (test_config.ConfigTests.test_build_user_store_uses_runtime_credentials) ... ok\ntest_packet_count_trigger_resets_counter (test_defense.MorphingStrategyTests.test_packet_count_trigger_resets_counter) ... ok\ntest_time_based_morph_respects_interval (test_defense.MorphingStrategyTests.test_time_based_morph_respects_interval) ... ok\ntest_port_scan_detection_triggers_at_threshold (test_defense.ThreatDetectorTests.test_port_scan_detection_triggers_at_threshold) ... ok\ntest_scan_window_reset_allows_clean_restart (test_defense.ThreatDetectorTests.test_scan_window_reset_allows_clean_restart) ... ok\n\n----------------------------------------------------------------------\nRan 5 tests in 0.000s\n\nOK"
+  },
+  "checks": [
+    {
+      "name": "SDN controller and VIP morphing",
+      "category": "Core architecture",
+      "expected": "The controller should implement OpenFlow handling, VIP mapping, and IP morphing.",
+      "status": "implemented",
+      "evidence": [
+        "ultimate_mtd_controller.py"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "Threat-triggered defense",
+      "category": "Core architecture",
+      "expected": "Scan-like behavior should be detected and used to trigger defensive remorphing.",
+      "status": "implemented",
+      "evidence": [
+        "defense.py",
+        "ultimate_mtd_controller.py"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "Multiple morphing strategies",
+      "category": "Core architecture",
+      "expected": "Reply, time, packet-count, threat-triggered, and manual morphing should exist.",
+      "status": "implemented",
+      "evidence": [
+        "defense.py",
+        "ultimate_mtd_controller.py"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "Dashboard and APIs",
+      "category": "User-facing architecture",
+      "expected": "A dashboard and the documented API endpoints should be available.",
+      "status": "implemented",
+      "evidence": [
+        "ultimate_mtd_controller.py"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "Attack simulation coverage",
+      "category": "Validation tooling",
+      "expected": "Attack simulator should cover the documented attack scenarios.",
+      "status": "partial",
+      "evidence": [
+        "attack_simulator.py"
+      ],
+      "notes": "Quick start mentions `brute_force`, but no `def brute_force` implementation or CLI choice exists."
+    },
+    {
+      "name": "Benchmark coverage",
+      "category": "Validation tooling",
+      "expected": "Benchmark suite should expose latency, throughput, CPU, memory, flow-table, and strategy comparison measurements.",
+      "status": "partial",
+      "evidence": [
+        "benchmark_suite.py"
+      ],
+      "notes": "Docs mention a dedicated flow-table benchmark, but the current CLI exposes resource and strategy modes instead."
+    },
+    {
+      "name": "Authentication and session handling",
+      "category": "Operational readiness",
+      "expected": "The dashboard should have login/session support rather than being fully open.",
+      "status": "implemented",
+      "evidence": [
+        "ultimate_mtd_controller.py"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "Configurable runtime secrets",
+      "category": "Operational readiness",
+      "expected": "Runtime configuration should allow safer overrides instead of only hardcoded secrets.",
+      "status": "implemented",
+      "evidence": [
+        "config.py",
+        "ultimate_mtd_controller.py"
+      ],
+      "notes": ""
+    },
+    {
+      "name": "Automated tests for core logic",
+      "category": "Operational readiness",
+      "expected": "Core logic should be backed by automated tests.",
+      "status": "partial",
+      "evidence": [
+        "test_config.py",
+        "test_defense.py"
+      ],
+      "notes": "Coverage exists for extracted core logic, but not yet for the Flask API or full controller packet paths."
+    },
+    {
+      "name": "Modular architecture",
+      "category": "Architecture quality",
+      "expected": "Core logic should be reusable outside the monolithic controller file.",
+      "status": "partial",
+      "evidence": [
+        "__init__.py",
+        "defense.py",
+        "models.py"
+      ],
+      "notes": "The controller is still the main runtime entry point, but the logic extraction has started."
+    },
+    {
+      "name": "Reproducible output artifacts",
+      "category": "Research alignment",
+      "expected": "Experiments should produce reusable result artifacts for comparison and reporting.",
+      "status": "partial",
+      "evidence": [
+        "attack_simulator.py",
+        "benchmark_suite.py"
+      ],
+      "notes": "Artifacts exist, but there is still room to standardize result schemas and summary reports."
+    },
+    {
+      "name": "Overall idea alignment",
+      "category": "Summary",
+      "expected": "The implemented architecture should reflect the project idea described in the docs.",
+      "status": "partial",
+      "evidence": [
+        "SDN-driven VIP mapping and morphing",
+        "Threat-triggered response",
+        "Real-time dashboard and API",
+        "Attack simulation suite",
+        "Benchmarking suite",
+        "Authentication and export features",
+        "Reproducible experiment outputs"
+      ],
+      "notes": "Weighted alignment score: 77.3%"
+    }
+  ]
+}

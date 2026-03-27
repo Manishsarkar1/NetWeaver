@@ -14,7 +14,21 @@
 ## 1) Install Dependencies
 ```bash
 pip install -r requirements.txt
-pip install flask-login reportlab pandas scapy matplotlib seaborn psutil
+pip install pandas scapy matplotlib seaborn psutil
+```
+
+Optional hardening before launch:
+```bash
+export VANTA_SECRET_KEY='replace-this-secret'
+export VANTA_ADMIN_USERNAME='admin'
+export VANTA_ADMIN_PASSWORD='replace-this-password'
+```
+
+Windows PowerShell:
+```powershell
+$env:VANTA_SECRET_KEY='replace-this-secret'
+$env:VANTA_ADMIN_USERNAME='admin'
+$env:VANTA_ADMIN_PASSWORD='replace-this-password'
 ```
 
 ## 2) Start VANTA Controller
@@ -69,6 +83,7 @@ python benchmark_suite.py --test all
 - VIP mapping table changes over time.
 - Port scan triggers threat events.
 - Exports download correctly (CSV/JSON/PDF).
+- Core logic tests pass with `python -m unittest discover -s tests -v`.
 
 ## Common Issues
 1. `Port 6653 or 5000 already in use`

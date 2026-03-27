@@ -23,6 +23,12 @@ USAGE:
 Default credentials:
     Username: admin
     Password: mtd2024
+
+Environment overrides:
+    VANTA_SECRET_KEY
+    VANTA_ADMIN_USERNAME
+    VANTA_ADMIN_PASSWORD
+    VANTA_SESSION_LIFETIME_HOURS
 """
 
 from ryu.base import app_manager
@@ -41,13 +47,20 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import threading
 import time
-import random
 import json
 import csv
 import io
 from datetime import datetime, timedelta
 from collections import defaultdict
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
+
+from vanta_core import (
+    MorphEvent as CoreMorphEvent,
+    MorphingStrategy as CoreMorphingStrategy,
+    ThreatDetector as CoreThreatDetector,
+    build_user_store,
+    load_runtime_config,
+)
 
 # Try to import reportlab for PDF export
 try:
@@ -63,9 +76,12 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 # Flask / SocketIO setup
 # ─────────────────────────────────────────────────────────────────────────────
+runtime_config = load_runtime_config()
 flask_app = Flask(__name__)
-flask_app.config['SECRET_KEY'] = 'mtd-ultra-secret-key-2024-change-in-production'
-flask_app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+flask_app.config['SECRET_KEY'] = runtime_config.secret_key
+flask_app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
+    hours=runtime_config.session_lifetime_hours
+)
 socketio = SocketIO(flask_app, cors_allowed_origins="*", async_mode='eventlet')
 
 login_manager = LoginManager()
@@ -76,12 +92,7 @@ login_manager.login_view = 'login'
 controller_instance = None
 
 # In-memory user store (replace with DB in production)
-users_db = {
-    'admin': {
-        'password': generate_password_hash('mtd2024'),
-        'role': 'admin'
-    }
-}
+users_db = build_user_store(generate_password_hash, runtime_config)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Auth helpers
@@ -327,14 +338,17 @@ class UltimateMTDController(app_manager.RyuApp):
 
         # Sub-systems
         self.stats           = MTDStatistics()
-        self.strategy        = MorphingStrategy()
-        self.threat_detector = ThreatDetector()
+        self.strategy        = CoreMorphingStrategy()
+        self.threat_detector = CoreThreatDetector(debug_sink=self.logger.info)
 
         self.logger.info("=" * 60)
         self.logger.info("  ULTIMATE MTD CONTROLLER  (FIXED VERSION)")
         self.logger.info("=" * 60)
         self.logger.info("  Dashboard : http://localhost:5000")
-        self.logger.info("  Login     : admin / mtd2024")
+        self.logger.info(
+            f"  Login     : {runtime_config.admin_username} / "
+            "[set via VANTA_ADMIN_PASSWORD]"
+        )
         self.logger.info("=" * 60)
 
         # Start Flask in a daemon thread
@@ -428,7 +442,7 @@ class UltimateMTDController(app_manager.RyuApp):
         if not new_vips:
             return
 
-        event = MorphEvent(
+        event = CoreMorphEvent(
             timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             protocol=protocol,
             ip1=ip1, ip2=ip2,
