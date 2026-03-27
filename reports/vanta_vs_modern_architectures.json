@@ -1,0 +1,240 @@
+{
+  "generated_at": "2026-03-27T18:48:20.367009+00:00",
+  "repository": "C:\\Users\\sarka\\OneDrive\\Desktop\\minor\\VANTA-Variable-Network-Topology-Architecture-",
+  "tests": {
+    "command": "C:\\Users\\sarka\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m unittest discover -s tests -v",
+    "returncode": 0,
+    "passed": true,
+    "stdout": "",
+    "stderr": "test_build_user_store_uses_runtime_credentials (test_config.ConfigTests.test_build_user_store_uses_runtime_credentials) ... ok\ntest_packet_count_trigger_resets_counter (test_defense.MorphingStrategyTests.test_packet_count_trigger_resets_counter) ... ok\ntest_time_based_morph_respects_interval (test_defense.MorphingStrategyTests.test_time_based_morph_respects_interval) ... ok\ntest_port_scan_detection_triggers_at_threshold (test_defense.ThreatDetectorTests.test_port_scan_detection_triggers_at_threshold) ... ok\ntest_scan_window_reset_allows_clean_restart (test_defense.ThreatDetectorTests.test_scan_window_reset_allows_clean_restart) ... ok\n\n----------------------------------------------------------------------\nRan 5 tests in 0.001s\n\nOK"
+  },
+  "vanta": {
+    "name": "VANTA",
+    "type": "Research prototype",
+    "strengths": [
+      "Implements SDN-driven VIP virtualization and morphing rather than static addressing.",
+      "Can react to reconnaissance by triggering morph events in near real time.",
+      "Supports multiple morphing strategies instead of a single fixed defense policy.",
+      "Includes a live dashboard and API endpoints for visibility and demoability.",
+      "Has local attack and benchmark tooling to evaluate the prototype."
+    ],
+    "weaknesses": [
+      "Does not implement workload-level microsegmentation or policy labels common in modern enterprise segmentation.",
+      "Does not evaluate device health or posture before allowing access.",
+      "Authentication is basic login/session handling, not strong identity-centric zero trust.",
+      "Architecture is aimed at Mininet/OVS lab environments rather than hybrid enterprise deployment."
+    ],
+    "scores": {
+      "dynamic_network_obfuscation": 5,
+      "identity_centric_access": 2,
+      "device_posture_awareness": 0,
+      "lateral_movement_containment": 3,
+      "granularity_of_control": 3,
+      "real_time_visibility": 4,
+      "benchmarking_and_measurement": 4,
+      "hybrid_enterprise_fit": 0,
+      "deployment_maturity": 2
+    },
+    "source_notes": [
+      "Local repo inspection of ultimate_mtd_controller.py, vanta_core/defense.py, attack_simulator.py, benchmark_suite.py, and tests."
+    ]
+  },
+  "comparisons": [
+    {
+      "architecture": "Traditional perimeter / static network",
+      "vanta_total": 23,
+      "other_total": 13,
+      "wins": [
+        "dynamic_network_obfuscation",
+        "identity_centric_access",
+        "lateral_movement_containment",
+        "granularity_of_control",
+        "real_time_visibility",
+        "benchmarking_and_measurement"
+      ],
+      "losses": [
+        "hybrid_enterprise_fit",
+        "deployment_maturity"
+      ],
+      "ties": [
+        "device_posture_awareness"
+      ]
+    },
+    {
+      "architecture": "Zero Trust Architecture (general)",
+      "vanta_total": 23,
+      "other_total": 38,
+      "wins": [
+        "dynamic_network_obfuscation"
+      ],
+      "losses": [
+        "identity_centric_access",
+        "device_posture_awareness",
+        "lateral_movement_containment",
+        "granularity_of_control",
+        "hybrid_enterprise_fit",
+        "deployment_maturity"
+      ],
+      "ties": [
+        "real_time_visibility",
+        "benchmarking_and_measurement"
+      ]
+    },
+    {
+      "architecture": "Zero Trust microsegmentation",
+      "vanta_total": 23,
+      "other_total": 36,
+      "wins": [
+        "dynamic_network_obfuscation"
+      ],
+      "losses": [
+        "identity_centric_access",
+        "device_posture_awareness",
+        "lateral_movement_containment",
+        "granularity_of_control",
+        "hybrid_enterprise_fit",
+        "deployment_maturity"
+      ],
+      "ties": [
+        "real_time_visibility",
+        "benchmarking_and_measurement"
+      ]
+    },
+    {
+      "architecture": "BeyondCorp-style zero trust access",
+      "vanta_total": 23,
+      "other_total": 34,
+      "wins": [
+        "dynamic_network_obfuscation",
+        "benchmarking_and_measurement"
+      ],
+      "losses": [
+        "identity_centric_access",
+        "device_posture_awareness",
+        "granularity_of_control",
+        "hybrid_enterprise_fit",
+        "deployment_maturity"
+      ],
+      "ties": [
+        "lateral_movement_containment",
+        "real_time_visibility"
+      ]
+    }
+  ],
+  "modern_architectures": [
+    {
+      "name": "Traditional perimeter / static network",
+      "type": "Legacy baseline",
+      "strengths": [
+        "Simple to understand and operate in stable on-prem environments.",
+        "Often lower initial deployment complexity than more adaptive architectures."
+      ],
+      "weaknesses": [
+        "Relies heavily on trusted internal network assumptions.",
+        "Weaker against lateral movement and stale reconnaissance problems.",
+        "Less aligned with remote, hybrid, and cloud-first environments."
+      ],
+      "scores": {
+        "dynamic_network_obfuscation": 0,
+        "identity_centric_access": 1,
+        "device_posture_awareness": 0,
+        "lateral_movement_containment": 1,
+        "granularity_of_control": 1,
+        "real_time_visibility": 2,
+        "benchmarking_and_measurement": 2,
+        "hybrid_enterprise_fit": 1,
+        "deployment_maturity": 5
+      },
+      "source_notes": [
+        "NIST SP 800-207 says zero trust shifts from static, network-based perimeters to protecting users, assets, and resources.",
+        "Source: https://csrc.nist.gov/pubs/sp/800/207/final"
+      ]
+    },
+    {
+      "name": "Zero Trust Architecture (general)",
+      "type": "Mainstream modern architecture",
+      "strengths": [
+        "Assumes breach and verifies each request instead of trusting network location.",
+        "Strong fit for remote, cloud, and hybrid access patterns.",
+        "Emphasizes identity, device, policy, analytics, and least privilege."
+      ],
+      "weaknesses": [
+        "Can be complex to design and integrate across many enterprise pillars.",
+        "Does not by itself obfuscate network reconnaissance the way MTD can."
+      ],
+      "scores": {
+        "dynamic_network_obfuscation": 1,
+        "identity_centric_access": 5,
+        "device_posture_awareness": 5,
+        "lateral_movement_containment": 4,
+        "granularity_of_control": 5,
+        "real_time_visibility": 4,
+        "benchmarking_and_measurement": 4,
+        "hybrid_enterprise_fit": 5,
+        "deployment_maturity": 5
+      },
+      "source_notes": [
+        "NIST SP 800-207 defines zero trust as moving defenses away from static network perimeters and focusing on users, assets, and resources.",
+        "CISA Zero Trust Maturity Model v2.0 describes five pillars and cross-cutting capabilities for modern deployment.",
+        "Sources: https://csrc.nist.gov/pubs/sp/800/207/final ; https://www.cisa.gov/resources-tools/resources/zero-trust-maturity-model"
+      ]
+    },
+    {
+      "name": "Zero Trust microsegmentation",
+      "type": "Modern containment architecture",
+      "strengths": [
+        "Reduces attack surface and limits lateral movement through fine-grained segmentation.",
+        "Works well across hybrid, multi-cloud, and data-center environments.",
+        "Improves visibility and containment around east-west traffic."
+      ],
+      "weaknesses": [
+        "Can be operationally heavy to plan, label, and maintain at scale.",
+        "Focused more on containment and policy than on deception or address obfuscation."
+      ],
+      "scores": {
+        "dynamic_network_obfuscation": 1,
+        "identity_centric_access": 4,
+        "device_posture_awareness": 3,
+        "lateral_movement_containment": 5,
+        "granularity_of_control": 5,
+        "real_time_visibility": 4,
+        "benchmarking_and_measurement": 4,
+        "hybrid_enterprise_fit": 5,
+        "deployment_maturity": 5
+      },
+      "source_notes": [
+        "CISA says microsegmentation is a critical component of ZTA that reduces attack surface, limits lateral movement, and enhances visibility.",
+        "Illumio describes modern segmentation as hybrid and workload-level, focused on preventing spread across environments.",
+        "Sources: https://www.cisa.gov/resources-tools/resources/microsegmentation-zero-trust-part-one-introduction-and-planning ; https://www.illumio.com/illumio-segmentation"
+      ]
+    },
+    {
+      "name": "BeyondCorp-style zero trust access",
+      "type": "Identity/device-aware access model",
+      "strengths": [
+        "Moves access control away from the network perimeter toward user and device context.",
+        "Strong support for access from untrusted networks without traditional VPN assumptions.",
+        "Well aligned with modern remote workforce models."
+      ],
+      "weaknesses": [
+        "Primarily focused on secure access decisions, not on network deception.",
+        "Less directly focused on internal topology mutation than VANTA."
+      ],
+      "scores": {
+        "dynamic_network_obfuscation": 0,
+        "identity_centric_access": 5,
+        "device_posture_awareness": 5,
+        "lateral_movement_containment": 3,
+        "granularity_of_control": 4,
+        "real_time_visibility": 4,
+        "benchmarking_and_measurement": 3,
+        "hybrid_enterprise_fit": 5,
+        "deployment_maturity": 5
+      },
+      "source_notes": [
+        "Google says BeyondCorp grants access based on contextual factors from the user and device rather than network location.",
+        "Source: https://cloud.google.com/beyondcorp?hl=en"
+      ]
+    }
+  ]
+}
