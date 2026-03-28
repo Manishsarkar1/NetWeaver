@@ -68,6 +68,8 @@ def infer_vanta_profile() -> ArchitectureProfile:
     attack = read_text(ROOT / "attack_simulator.py")
     benchmark = read_text(ROOT / "benchmark_suite.py")
     defense = read_text(ROOT / "vanta_core" / "defense.py")
+    access = read_text(ROOT / "vanta_core" / "access_control.py")
+    deployment = read_text(ROOT / "vanta_core" / "deployment.py")
 
     has_auth = all(
         has_pattern(controller, pattern)
@@ -106,22 +108,58 @@ def infer_vanta_profile() -> ArchitectureProfile:
         has_pattern(attack, pattern)
         for pattern in [r"def port_scan", r"def syn_flood", r"def ping_flood", r"def reconnaissance"]
     )
-    has_identity_context = has_auth
-    has_device_context = False
-    has_mfa = False
-    has_microsegmentation = False
-    has_remote_hybrid_model = False
+    has_identity_context = all(
+        has_pattern(text, pattern)
+        for text, pattern in [
+            (access, r"class ZeroTrustAccessPolicy"),
+            (controller, r"mfa_code"),
+            (controller, r"/api/access/context"),
+        ]
+    )
+    has_device_context = all(
+        has_pattern(text, pattern)
+        for text, pattern in [
+            (access, r"device_trust"),
+            (controller, r"X-VANTA-DEVICE-TRUST|device_trust"),
+            (controller, r"device_id"),
+        ]
+    )
+    has_mfa = all(
+        has_pattern(text, pattern)
+        for text, pattern in [
+            (access, r"verify_mfa"),
+            (controller, r"mfa_verified"),
+            (controller, r"VANTA_MFA_CODE"),
+        ]
+    )
+    has_microsegmentation = all(
+        has_pattern(text, pattern)
+        for text, pattern in [
+            (access, r"segmentation_profile"),
+            (access, r"admin-zone|user-zone|quarantine-zone"),
+            (deployment, r"microsegmented-zones|policy-zones"),
+        ]
+    )
+    has_remote_hybrid_model = all(
+        has_pattern(text, pattern)
+        for text, pattern in [
+            (deployment, r"hybrid"),
+            (controller, r"/api/deployment/profile"),
+            (controller, r"/api/health"),
+        ]
+    )
+    has_operational_tests = (ROOT / "tests" / "test_access_control.py").exists()
 
     scores = {
         "dynamic_network_obfuscation": 5 if has_sdn and has_threat_response else 2,
-        "identity_centric_access": 2 if has_identity_context else 0,
-        "device_posture_awareness": 1 if has_device_context else 0,
-        "lateral_movement_containment": 3 if has_threat_response else 1,
-        "granularity_of_control": 3 if has_strategy_modes else 1,
+        "identity_centric_access": 4 if has_identity_context and has_mfa else 2 if has_identity_context else 0,
+        "device_posture_awareness": 3 if has_device_context else 0,
+        "lateral_movement_containment": 4 if has_threat_response and has_microsegmentation else 3 if has_threat_response else 1,
+        "granularity_of_control": 4 if has_strategy_modes and has_microsegmentation else 2,
         "real_time_visibility": 4 if has_dashboard and has_exports else 2,
         "benchmarking_and_measurement": 4 if has_benchmarks and has_tests else 2,
-        "hybrid_enterprise_fit": 1 if has_remote_hybrid_model else 0,
-        "deployment_maturity": 2 if has_tests and has_exports and has_attack_suite else 1,
+        "hybrid_enterprise_fit": 3 if has_remote_hybrid_model and has_device_context else 1 if has_remote_hybrid_model else 0,
+        "deployment_maturity": 4 if has_tests and has_operational_tests and has_exports and has_attack_suite and has_remote_hybrid_model else 2 if has_tests and has_exports else 1,
     }
 
     strengths = []
@@ -137,6 +175,12 @@ def infer_vanta_profile() -> ArchitectureProfile:
         strengths.append("Includes a live dashboard and API endpoints for visibility and demoability.")
     if has_benchmarks:
         strengths.append("Has local attack and benchmark tooling to evaluate the prototype.")
+    if has_identity_context and has_mfa:
+        strengths.append("Adds MFA-aware, identity-centric access decisions for control-plane operations.")
+    if has_device_context:
+        strengths.append("Evaluates device trust and exposes posture-aware access context for demo and policy use.")
+    if has_remote_hybrid_model:
+        strengths.append("Includes deployment profiles and health endpoints that make hybrid-ready operation clearer.")
 
     if not has_microsegmentation:
         weaknesses.append("Does not implement workload-level microsegmentation or policy labels common in modern enterprise segmentation.")
@@ -146,7 +190,7 @@ def infer_vanta_profile() -> ArchitectureProfile:
         weaknesses.append("Authentication is basic login/session handling, not strong identity-centric zero trust.")
     if not has_remote_hybrid_model:
         weaknesses.append("Architecture is aimed at Mininet/OVS lab environments rather than hybrid enterprise deployment.")
-    if not has_tests or not has_exports:
+    if not has_tests or not has_exports or not has_operational_tests:
         weaknesses.append("Operational maturity is still prototype-level rather than production-grade.")
 
     return ArchitectureProfile(

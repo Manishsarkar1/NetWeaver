@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-03-27T18:48:20.367009+00:00",
+  "generated_at": "2026-03-28T02:22:05.381553+00:00",
   "repository": "C:\\Users\\sarka\\OneDrive\\Desktop\\minor\\VANTA-Variable-Network-Topology-Architecture-",
   "tests": {
-    "command": "C:\\Users\\sarka\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -m unittest discover -s tests -v",
+    "command": "C:\\Extra things\\MySYS\\ucrt64\\bin\\python.exe -m unittest discover -s tests -v",
     "returncode": 0,
     "passed": true,
     "stdout": "",
-    "stderr": "test_build_user_store_uses_runtime_credentials (test_config.ConfigTests.test_build_user_store_uses_runtime_credentials) ... ok\ntest_packet_count_trigger_resets_counter (test_defense.MorphingStrategyTests.test_packet_count_trigger_resets_counter) ... ok\ntest_time_based_morph_respects_interval (test_defense.MorphingStrategyTests.test_time_based_morph_respects_interval) ... ok\ntest_port_scan_detection_triggers_at_threshold (test_defense.ThreatDetectorTests.test_port_scan_detection_triggers_at_threshold) ... ok\ntest_scan_window_reset_allows_clean_restart (test_defense.ThreatDetectorTests.test_scan_window_reset_allows_clean_restart) ... ok\n\n----------------------------------------------------------------------\nRan 5 tests in 0.001s\n\nOK"
+    "stderr": "test_admin_requires_mfa_for_sensitive_actions (test_access_control.AccessControlTests.test_admin_requires_mfa_for_sensitive_actions) ... ok\ntest_verified_user_device_gets_user_zone (test_access_control.AccessControlTests.test_verified_user_device_gets_user_zone) ... ok\ntest_hybrid_profile_enables_remote_agent_support (test_access_control.DeploymentProfileTests.test_hybrid_profile_enables_remote_agent_support) ... ok\ntest_build_user_store_uses_runtime_credentials (test_config.ConfigTests.test_build_user_store_uses_runtime_credentials) ... ok\ntest_packet_count_trigger_resets_counter (test_defense.MorphingStrategyTests.test_packet_count_trigger_resets_counter) ... ok\ntest_time_based_morph_respects_interval (test_defense.MorphingStrategyTests.test_time_based_morph_respects_interval) ... ok\ntest_port_scan_detection_triggers_at_threshold (test_defense.ThreatDetectorTests.test_port_scan_detection_triggers_at_threshold) ... ok\ntest_scan_window_reset_allows_clean_restart (test_defense.ThreatDetectorTests.test_scan_window_reset_allows_clean_restart) ... ok\n\n----------------------------------------------------------------------\nRan 8 tests in 0.000s\n\nOK"
   },
   "vanta": {
     "name": "VANTA",
@@ -16,24 +16,22 @@
       "Can react to reconnaissance by triggering morph events in near real time.",
       "Supports multiple morphing strategies instead of a single fixed defense policy.",
       "Includes a live dashboard and API endpoints for visibility and demoability.",
-      "Has local attack and benchmark tooling to evaluate the prototype."
+      "Has local attack and benchmark tooling to evaluate the prototype.",
+      "Adds MFA-aware, identity-centric access decisions for control-plane operations.",
+      "Evaluates device trust and exposes posture-aware access context for demo and policy use.",
+      "Includes deployment profiles and health endpoints that make hybrid-ready operation clearer."
     ],
-    "weaknesses": [
-      "Does not implement workload-level microsegmentation or policy labels common in modern enterprise segmentation.",
-      "Does not evaluate device health or posture before allowing access.",
-      "Authentication is basic login/session handling, not strong identity-centric zero trust.",
-      "Architecture is aimed at Mininet/OVS lab environments rather than hybrid enterprise deployment."
-    ],
+    "weaknesses": [],
     "scores": {
       "dynamic_network_obfuscation": 5,
-      "identity_centric_access": 2,
-      "device_posture_awareness": 0,
-      "lateral_movement_containment": 3,
-      "granularity_of_control": 3,
+      "identity_centric_access": 4,
+      "device_posture_awareness": 3,
+      "lateral_movement_containment": 4,
+      "granularity_of_control": 4,
       "real_time_visibility": 4,
       "benchmarking_and_measurement": 4,
-      "hybrid_enterprise_fit": 0,
-      "deployment_maturity": 2
+      "hybrid_enterprise_fit": 3,
+      "deployment_maturity": 4
     },
     "source_notes": [
       "Local repo inspection of ultimate_mtd_controller.py, vanta_core/defense.py, attack_simulator.py, benchmark_suite.py, and tests."
@@ -42,27 +40,26 @@
   "comparisons": [
     {
       "architecture": "Traditional perimeter / static network",
-      "vanta_total": 23,
+      "vanta_total": 35,
       "other_total": 13,
       "wins": [
         "dynamic_network_obfuscation",
         "identity_centric_access",
+        "device_posture_awareness",
         "lateral_movement_containment",
         "granularity_of_control",
         "real_time_visibility",
-        "benchmarking_and_measurement"
+        "benchmarking_and_measurement",
+        "hybrid_enterprise_fit"
       ],
       "losses": [
-        "hybrid_enterprise_fit",
         "deployment_maturity"
       ],
-      "ties": [
-        "device_posture_awareness"
-      ]
+      "ties": []
     },
     {
       "architecture": "Zero Trust Architecture (general)",
-      "vanta_total": 23,
+      "vanta_total": 35,
       "other_total": 38,
       "wins": [
         "dynamic_network_obfuscation"
@@ -70,53 +67,53 @@
       "losses": [
         "identity_centric_access",
         "device_posture_awareness",
-        "lateral_movement_containment",
         "granularity_of_control",
         "hybrid_enterprise_fit",
         "deployment_maturity"
       ],
       "ties": [
+        "lateral_movement_containment",
         "real_time_visibility",
         "benchmarking_and_measurement"
       ]
     },
     {
       "architecture": "Zero Trust microsegmentation",
-      "vanta_total": 23,
+      "vanta_total": 35,
       "other_total": 36,
       "wins": [
         "dynamic_network_obfuscation"
       ],
       "losses": [
-        "identity_centric_access",
-        "device_posture_awareness",
         "lateral_movement_containment",
         "granularity_of_control",
         "hybrid_enterprise_fit",
         "deployment_maturity"
       ],
       "ties": [
+        "identity_centric_access",
+        "device_posture_awareness",
         "real_time_visibility",
         "benchmarking_and_measurement"
       ]
     },
     {
       "architecture": "BeyondCorp-style zero trust access",
-      "vanta_total": 23,
+      "vanta_total": 35,
       "other_total": 34,
       "wins": [
         "dynamic_network_obfuscation",
+        "lateral_movement_containment",
         "benchmarking_and_measurement"
       ],
       "losses": [
         "identity_centric_access",
         "device_posture_awareness",
-        "granularity_of_control",
         "hybrid_enterprise_fit",
         "deployment_maturity"
       ],
       "ties": [
-        "lateral_movement_containment",
+        "granularity_of_control",
         "real_time_visibility"
       ]
     }

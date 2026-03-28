@@ -9,6 +9,9 @@ class ConfigTests(unittest.TestCase):
             secret_key="secret",
             admin_username="operator",
             admin_password="strong-pass",
+            deployment_mode="hybrid",
+            require_mfa_for_admin=True,
+            default_mfa_code="654321",
         )
 
         users = build_user_store(lambda password: f"hashed::{password}", config=config)

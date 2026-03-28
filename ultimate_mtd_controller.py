@@ -40,7 +40,7 @@ from ryu.lib.packet import packet, ethernet, arp, ipv4, icmp, tcp, udp
 from ryu.controller.ofp_handler import OFPHandler
 from ryu.lib import hub
 
-from flask import Flask, render_template_string, jsonify, request, redirect, url_for, send_file
+from flask import Flask, render_template_string, jsonify, request, redirect, url_for, send_file, session
 from flask_socketio import SocketIO, emit
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -55,10 +55,13 @@ from collections import defaultdict
 from dataclasses import asdict
 
 from vanta_core import (
+    AccessContext,
     MorphEvent as CoreMorphEvent,
     MorphingStrategy as CoreMorphingStrategy,
     ThreatDetector as CoreThreatDetector,
+    ZeroTrustAccessPolicy,
     build_user_store,
+    load_deployment_profile,
     load_runtime_config,
 )
 
@@ -77,6 +80,7 @@ except ImportError:
 # Flask / SocketIO setup
 # ─────────────────────────────────────────────────────────────────────────────
 runtime_config = load_runtime_config()
+deployment_profile = load_deployment_profile(runtime_config.deployment_mode)
 flask_app = Flask(__name__)
 flask_app.config['SECRET_KEY'] = runtime_config.secret_key
 flask_app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
@@ -93,6 +97,9 @@ controller_instance = None
 
 # In-memory user store (replace with DB in production)
 users_db = build_user_store(generate_password_hash, runtime_config)
+access_policy = ZeroTrustAccessPolicy(
+    require_mfa_for_admin=runtime_config.require_mfa_for_admin
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Auth helpers
@@ -109,6 +116,41 @@ def load_user(username):
     if username in users_db:
         return User(username, users_db[username]['role'])
     return None
+
+
+def _remote_access_detected():
+    forwarded_for = request.headers.get('X-Forwarded-For', '')
+    return bool(forwarded_for) or request.args.get('remote') == '1'
+
+
+def _build_access_context(resource_path):
+    return AccessContext(
+        username=getattr(current_user, 'username', 'anonymous'),
+        role=getattr(current_user, 'role', 'guest'),
+        source_ip=request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown'),
+        user_agent=request.headers.get('User-Agent', 'unknown'),
+        requested_resource=resource_path,
+        device_id=session.get('device_id', request.headers.get('X-VANTA-DEVICE-ID', '')),
+        device_trust=session.get('device_trust', request.headers.get('X-VANTA-DEVICE-TRUST', 'unknown')),
+        mfa_verified=bool(session.get('mfa_verified', False)),
+        deployment_mode=deployment_profile.mode,
+        remote_access=_remote_access_detected(),
+    )
+
+
+def _enforce_access(resource_path):
+    context = _build_access_context(resource_path)
+    decision = access_policy.evaluate(context)
+    session['last_access_decision'] = {
+        'resource': resource_path,
+        'allowed': decision.allowed,
+        'risk_score': decision.risk_score,
+        'trust_score': decision.trust_score,
+        'segmentation_profile': decision.segmentation_profile,
+        'required_controls': decision.required_controls,
+        'reasons': decision.reasons,
+    }
+    return decision
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -345,10 +387,12 @@ class UltimateMTDController(app_manager.RyuApp):
         self.logger.info("  ULTIMATE MTD CONTROLLER  (FIXED VERSION)")
         self.logger.info("=" * 60)
         self.logger.info("  Dashboard : http://localhost:5000")
+        self.logger.info(f"  Deployment: {deployment_profile.mode}")
         self.logger.info(
             f"  Login     : {runtime_config.admin_username} / "
             "[set via VANTA_ADMIN_PASSWORD]"
         )
+        self.logger.info("  MFA Code  : [set via VANTA_MFA_CODE]")
         self.logger.info("=" * 60)
 
         # Start Flask in a daemon thread
@@ -1095,6 +1139,16 @@ LOGIN_HTML = """<!DOCTYPE html>
     <form method="POST">
       <div class="form-group"><label>Username</label><input name="username" autofocus></div>
       <div class="form-group"><label>Password</label><input name="password" type="password"></div>
+      <div class="form-group"><label>MFA Code</label><input name="mfa_code" placeholder="Required for admin actions"></div>
+      <div class="form-group"><label>Device ID</label><input name="device_id" placeholder="demo-laptop-01"></div>
+      <div class="form-group"><label>Device Trust</label>
+        <select name="device_trust">
+          <option value="verified">Verified</option>
+          <option value="managed">Managed</option>
+          <option value="unknown" selected>Unknown</option>
+          <option value="untrusted">Untrusted</option>
+        </select>
+      </div>
       <button type="submit">Login</button>
     </form>
   </div>
@@ -1110,8 +1164,16 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '')
         password = request.form.get('password', '')
+        mfa_code = request.form.get('mfa_code', '')
+        device_id = request.form.get('device_id', '').strip()
+        device_trust = request.form.get('device_trust', 'unknown').strip().lower()
         if username in users_db and check_password_hash(
                 users_db[username]['password'], password):
+            session['device_id'] = device_id or 'browser-session'
+            session['device_trust'] = device_trust or 'unknown'
+            session['mfa_verified'] = access_policy.verify_mfa(
+                mfa_code, runtime_config.default_mfa_code
+            )
             login_user(User(username, users_db[username]['role']),
                        remember=True)
             return redirect(url_for('index'))
@@ -1122,6 +1184,10 @@ def login():
 @flask_app.route('/logout')
 @login_required
 def logout():
+    session.pop('device_id', None)
+    session.pop('device_trust', None)
+    session.pop('mfa_verified', None)
+    session.pop('last_access_decision', None)
     logout_user()
     return redirect(url_for('login'))
 
@@ -1133,9 +1199,58 @@ def index():
                                   username=current_user.username)
 
 
+@flask_app.route('/api/health')
+def health_check():
+    return jsonify({
+        'status': 'ok',
+        'controller_ready': controller_instance is not None,
+        'deployment_mode': deployment_profile.mode,
+        'telemetry_level': deployment_profile.telemetry_level,
+    })
+
+
+@flask_app.route('/api/deployment/profile')
+@login_required
+def deployment_status():
+    decision = _enforce_access('/api/deployment/profile')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
+    return jsonify(deployment_profile.to_dict())
+
+
+@flask_app.route('/api/access/context')
+@login_required
+def access_context():
+    decision = _enforce_access('/api/access/context')
+    context = _build_access_context('/api/access/context')
+    return jsonify({
+        'context': {
+            'username': context.username,
+            'role': context.role,
+            'source_ip': context.source_ip,
+            'device_id': context.device_id,
+            'device_trust': context.device_trust,
+            'mfa_verified': context.mfa_verified,
+            'deployment_mode': context.deployment_mode,
+            'remote_access': context.remote_access,
+        },
+        'decision': {
+            'allowed': decision.allowed,
+            'risk_score': decision.risk_score,
+            'trust_score': decision.trust_score,
+            'segmentation_profile': decision.segmentation_profile,
+            'required_controls': decision.required_controls,
+            'reasons': decision.reasons,
+        },
+    })
+
+
 @flask_app.route('/api/stats')
 @login_required
 def get_stats():
+    decision = _enforce_access('/api/stats')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if controller_instance:
         return jsonify(controller_instance.stats.get_stats_dict())
     return jsonify({'error': 'Controller not initialized'})
@@ -1144,6 +1259,9 @@ def get_stats():
 @flask_app.route('/api/mappings')
 @login_required
 def get_mappings():
+    decision = _enforce_access('/api/mappings')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if controller_instance:
         return jsonify({'mappings': [
             {'real_ip': r, 'vip': v}
@@ -1155,6 +1273,9 @@ def get_mappings():
 @flask_app.route('/api/strategy', methods=['GET', 'POST'])
 @login_required
 def manage_strategy():
+    decision = _enforce_access('/api/strategy')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if not controller_instance:
         return jsonify({'error': 'Controller not initialized'})
     s = controller_instance.strategy
@@ -1186,6 +1307,9 @@ def manage_strategy():
 @flask_app.route('/api/morph/force', methods=['POST'])
 @login_required
 def force_morph():
+    decision = _enforce_access('/api/morph/force')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if not controller_instance:
         return jsonify({'error': 'Controller not initialized'})
     ips = list(controller_instance.real_to_virtual.keys())
@@ -1200,6 +1324,9 @@ def force_morph():
 @flask_app.route('/api/export/csv')
 @login_required
 def export_csv():
+    decision = _enforce_access('/api/export/csv')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if not controller_instance:
         return jsonify({'error': 'Controller not initialized'})
     output = io.StringIO()
@@ -1221,6 +1348,9 @@ def export_csv():
 @flask_app.route('/api/export/json')
 @login_required
 def export_json():
+    decision = _enforce_access('/api/export/json')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if not controller_instance:
         return jsonify({'error': 'Controller not initialized'})
     data = controller_instance.stats.get_stats_dict()
@@ -1235,6 +1365,9 @@ def export_json():
 @flask_app.route('/api/export/pdf')
 @login_required
 def export_pdf():
+    decision = _enforce_access('/api/export/pdf')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if not controller_instance:
         return jsonify({'error': 'Controller not initialized'})
     if not REPORTLAB_AVAILABLE:

@@ -1,11 +1,11 @@
 # VANTA vs Modern Security Architectures
 
-- Generated: 2026-03-27 18:48:20 UTC
+- Generated: 2026-03-28 02:22:05 UTC
 - Repository: `C:\Users\sarka\OneDrive\Desktop\minor\VANTA-Variable-Network-Topology-Architecture-`
 - Scope: compares VANTA to current mainstream security architecture patterns, not just to your internal project docs.
 
 ## Test Result
-- Command: `C:\Users\sarka\AppData\Local\Python\pythoncore-3.14-64\python.exe -m unittest discover -s tests -v`
+- Command: `C:\Extra things\MySYS\ucrt64\bin\python.exe -m unittest discover -s tests -v`
 - Status: PASS
 
 ## What This Comparison Means
@@ -28,7 +28,7 @@
 
 | Architecture | Dynamic Network Obfuscation | Identity Centric Access | Device Posture Awareness | Lateral Movement Containment | Granularity Of Control | Real Time Visibility | Benchmarking And Measurement | Hybrid Enterprise Fit | Deployment Maturity | Total |
 |---|---|---|---|---|---|---|---|---|---|---|
-| VANTA | 5 | 2 | 0 | 3 | 3 | 4 | 4 | 0 | 2 | 23 |
+| VANTA | 5 | 4 | 3 | 4 | 4 | 4 | 4 | 3 | 4 | 35 |
 | Traditional perimeter / static network | 0 | 1 | 0 | 1 | 1 | 2 | 2 | 1 | 5 | 13 |
 | Zero Trust Architecture (general) | 1 | 5 | 5 | 4 | 5 | 4 | 4 | 5 | 5 | 38 |
 | Zero Trust microsegmentation | 1 | 4 | 3 | 5 | 5 | 4 | 4 | 5 | 5 | 36 |
@@ -42,38 +42,36 @@
 - Supports multiple morphing strategies instead of a single fixed defense policy.
 - Includes a live dashboard and API endpoints for visibility and demoability.
 - Has local attack and benchmark tooling to evaluate the prototype.
+- Adds MFA-aware, identity-centric access decisions for control-plane operations.
+- Evaluates device trust and exposes posture-aware access context for demo and policy use.
+- Includes deployment profiles and health endpoints that make hybrid-ready operation clearer.
 
 ### Weaknesses
-- Does not implement workload-level microsegmentation or policy labels common in modern enterprise segmentation.
-- Does not evaluate device health or posture before allowing access.
-- Authentication is basic login/session handling, not strong identity-centric zero trust.
-- Architecture is aimed at Mininet/OVS lab environments rather than hybrid enterprise deployment.
 
 ## Head-to-Head Summary
 
 ### VANTA vs Traditional perimeter / static network
-- Total score: VANTA 23 vs 13
-- VANTA leads in: Dynamic Network Obfuscation, Identity Centric Access, Lateral Movement Containment, Granularity Of Control, Real Time Visibility, Benchmarking And Measurement
-- VANTA trails in: Hybrid Enterprise Fit, Deployment Maturity
-- Ties in: Device Posture Awareness
+- Total score: VANTA 35 vs 13
+- VANTA leads in: Dynamic Network Obfuscation, Identity Centric Access, Device Posture Awareness, Lateral Movement Containment, Granularity Of Control, Real Time Visibility, Benchmarking And Measurement, Hybrid Enterprise Fit
+- VANTA trails in: Deployment Maturity
 
 ### VANTA vs Zero Trust Architecture (general)
-- Total score: VANTA 23 vs 38
+- Total score: VANTA 35 vs 38
 - VANTA leads in: Dynamic Network Obfuscation
-- VANTA trails in: Identity Centric Access, Device Posture Awareness, Lateral Movement Containment, Granularity Of Control, Hybrid Enterprise Fit, Deployment Maturity
-- Ties in: Real Time Visibility, Benchmarking And Measurement
+- VANTA trails in: Identity Centric Access, Device Posture Awareness, Granularity Of Control, Hybrid Enterprise Fit, Deployment Maturity
+- Ties in: Lateral Movement Containment, Real Time Visibility, Benchmarking And Measurement
 
 ### VANTA vs Zero Trust microsegmentation
-- Total score: VANTA 23 vs 36
+- Total score: VANTA 35 vs 36
 - VANTA leads in: Dynamic Network Obfuscation
-- VANTA trails in: Identity Centric Access, Device Posture Awareness, Lateral Movement Containment, Granularity Of Control, Hybrid Enterprise Fit, Deployment Maturity
-- Ties in: Real Time Visibility, Benchmarking And Measurement
+- VANTA trails in: Lateral Movement Containment, Granularity Of Control, Hybrid Enterprise Fit, Deployment Maturity
+- Ties in: Identity Centric Access, Device Posture Awareness, Real Time Visibility, Benchmarking And Measurement
 
 ### VANTA vs BeyondCorp-style zero trust access
-- Total score: VANTA 23 vs 34
-- VANTA leads in: Dynamic Network Obfuscation, Benchmarking And Measurement
-- VANTA trails in: Identity Centric Access, Device Posture Awareness, Granularity Of Control, Hybrid Enterprise Fit, Deployment Maturity
-- Ties in: Lateral Movement Containment, Real Time Visibility
+- Total score: VANTA 35 vs 34
+- VANTA leads in: Dynamic Network Obfuscation, Lateral Movement Containment, Benchmarking And Measurement
+- VANTA trails in: Identity Centric Access, Device Posture Awareness, Hybrid Enterprise Fit, Deployment Maturity
+- Ties in: Granularity Of Control, Real Time Visibility
 
 ## Takeaways
 - VANTA is strongest as a moving-target-defense and deception-oriented research architecture.

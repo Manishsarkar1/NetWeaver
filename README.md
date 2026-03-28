@@ -16,10 +16,10 @@
 </p>
 
 # VANTA
-Adaptive SDN-based Moving Target Defense (MTD) focused on invalidating attacker scan results through fast virtual IP (VIP) morphing.
+Variable Network Topology Architecture (VANTA) is an SDN-based Moving Target Defense research prototype that uses virtual IP (VIP) remapping, threat-triggered morphing, and a live dashboard to make reconnaissance data go stale quickly.
 
 ## Why VANTA
-External reconnaissance should become stale almost immediately.
+Traditional static addressing gives attackers a reliable map of hosts and services. VANTA reduces that advantage by changing attacker-facing identities after communication events, on schedule, after packet thresholds, or immediately when suspicious scan behavior is detected.
 
 | Phase | Device 1 | Vulnerable Device |
 |---|---|---|
@@ -30,17 +30,18 @@ External reconnaissance should become stale almost immediately.
 ```mermaid
 flowchart TB
     A["External Attacker"] --> B["OpenFlow Switch / OVS"]
-    B --> C["VANTA Controller\nRyu + Strategy Engine"]
+    B --> C["VANTA Controller\nRyu + Morphing Engine"]
     C --> D["VIP Mapper\nReal IP <-> Virtual IP"]
-    C --> E["Threat Detector\nScan / Probe Patterns"]
-    C --> F["Web Dashboard\nFlask + Socket.IO"]
+    C --> E["Threat Detector\nPort Scan Detection"]
+    C --> F["Dashboard + API\nFlask + Socket.IO"]
     D --> G["Protected Hosts"]
+    C --> H["Access Policy\nMFA + Device Trust"]
     E --> C
 
     classDef core fill:#0e1f4d,stroke:#00e5ff,color:#ffffff,stroke-width:1px;
     classDef edge fill:#0a152f,stroke:#3b82f6,color:#dbeafe,stroke-width:1px;
 
-    class C,D,E core;
+    class C,D,E,H core;
     class A,B,F,G edge;
 ```
 
@@ -54,74 +55,93 @@ flowchart TB
 +-- ultimate_mtd_controller.py
 +-- attack_simulator.py
 +-- benchmark_suite.py
++-- compare_architecture.py
++-- compare_modern_architectures.py
 +-- quick_start.md
 +-- project_overview.md
 +-- requirements.txt
++-- vanta_core/
++-- tests/
 +-- start_dashboard.sh
 +-- README.md
 ```
 
 ## Core Capabilities
-- OpenFlow 1.3 SDN control plane (Ryu).
-- VIP allocation and morphing.
-- Strategy modes: reply, time, packet-count, threat-triggered, manual.
-- Port-scan-oriented threat detection.
-- Real-time dashboard updates via WebSocket.
-- Authentication and session handling.
-- CSV/JSON/PDF exports.
+- OpenFlow 1.3 controller built on Ryu for SDN experimentation.
+- Dynamic VIP allocation and IP-pair morphing to invalidate stale scan results.
+- Multiple morphing modes: reply-triggered, time-based, packet-count-based, randomized intervals, threat-triggered, and operator-forced morphing.
+- Port-scan detection with configurable threshold/window logic.
+- Web dashboard with live topology, mappings, morph history, and trigger statistics over Socket.IO.
+- Login flow with MFA validation, simple zero-trust access decisions, and device-trust-aware control-plane access.
+- Deployment profiles for `lab`, `hybrid`, and `enterprise` modes.
+- Export support for CSV, JSON, and PDF reports.
+- Attack simulation and performance benchmarking utilities for experiments.
 
 ## Quick Start
 ```bash
-# 1) Install dependencies
+# 1) Install Python dependencies
 pip install -r requirements.txt
 pip install pandas scapy matplotlib seaborn psutil
 
-# Optional: override demo credentials for safer local runs
+# Optional: override demo credentials and deployment mode
 # Linux/macOS:
 export VANTA_SECRET_KEY='replace-this-secret'
 export VANTA_ADMIN_USERNAME='admin'
 export VANTA_ADMIN_PASSWORD='replace-this-password'
+export VANTA_MFA_CODE='246810'
+export VANTA_DEPLOYMENT_MODE='hybrid'
 
 # Windows PowerShell:
 $env:VANTA_SECRET_KEY='replace-this-secret'
 $env:VANTA_ADMIN_USERNAME='admin'
 $env:VANTA_ADMIN_PASSWORD='replace-this-password'
+$env:VANTA_MFA_CODE='246810'
+$env:VANTA_DEPLOYMENT_MODE='hybrid'
 
-# 2) Start controller
+# 2) Start the VANTA controller and dashboard backend
 ryu-manager ultimate_mtd_controller.py
 
-# 3) Start Mininet (new terminal)
+# 3) Start Mininet in a new terminal
 sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 
-# 4) Open dashboard
+# 4) Open the dashboard
 # http://localhost:5000
 # default login: admin / mtd2024
+# demo MFA code: 246810
 ```
 
 ## API Surface
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/api/stats` | `GET` | Runtime metrics and event history |
-| `/api/mappings` | `GET` | Current real-to-VIP map |
-| `/api/strategy` | `GET/POST` | Read or update strategy config |
-| `/api/morph/force` | `POST` | Trigger immediate morph |
-| `/api/export/csv` | `GET` | Download morph history |
-| `/api/export/json` | `GET` | Download full stats |
-| `/api/export/pdf` | `GET` | Download PDF report |
+| `/api/stats` | `GET` | Controller stats, threat history, protocol counts, and recent morph events |
+| `/api/mappings` | `GET` | Current real-IP to VIP assignments |
+| `/api/strategy` | `GET/POST` | Read or update active morphing strategy settings |
+| `/api/morph/force` | `POST` | Force immediate morphing of active IP pairs |
+| `/api/access/context` | `GET` | Current access-control context and last policy decision |
+| `/api/deployment/profile` | `GET` | Active deployment profile metadata |
+| `/api/health` | `GET` | Service health, deployment mode, and telemetry level |
+| `/api/export/csv` | `GET` | Export morph history as CSV |
+| `/api/export/json` | `GET` | Export controller statistics as JSON |
+| `/api/export/pdf` | `GET` | Export a PDF summary report |
 
 ## Experiment Checklist
 - `python attack_simulator.py --attack port_scan --target 10.0.0.2`
+- `python attack_simulator.py --attack reconnaissance --target 10.0.0.2`
 - `python benchmark_suite.py --test latency`
-- `python benchmark_suite.py --test strategy_comparison`
+- `python benchmark_suite.py --test throughput`
+- `python benchmark_suite.py --test strategy`
 - `python -m unittest discover -s tests -v`
 
 ## Metrics to Report
-- Security: attack success reduction, scan completeness degradation, detection-to-morph delay.
-- Performance: RTT/throughput overhead, CPU/memory usage, flow churn.
+- Security: scan detection accuracy, reconnaissance degradation, detection-to-morph delay, and attacker view instability.
+- Performance: RTT overhead, throughput impact, CPU/memory consumption, and controller event volume.
 
 ## Notes
-- `benchmark_suite.py` assumes Linux/Mininet tools (`ping -c`, `iperf`).
-- VANTA objective: force attacker reconnaissance data to expire faster than exploitation cycles.
+- Primary runtime target is Linux, Mininet, Open vSwitch, and Ryu; some scripts can be read on Windows, but full SDN execution is lab-oriented.
+- `attack_simulator.py` includes `port_scan`, `syn_flood`, `ping_flood`, `reconnaissance`, and `all` attack modes.
+- `benchmark_suite.py` relies on tools such as `ping` and `iperf`, and works best in a Mininet-capable environment.
+- The `vanta_core` package contains reusable policy, config, deployment, and defense logic covered by unit tests.
+- VANTA's research goal is to keep attacker reconnaissance data outdated long enough to reduce follow-on exploitation value.
 
 ## License
 - [Apache 2.0](https://github.com/Manishsarkar1/VANTA-Variable-Network-Topology-Architecture-/blob/prime/LICENSE)

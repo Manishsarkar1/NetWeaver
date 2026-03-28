@@ -22,6 +22,8 @@ Optional hardening before launch:
 export VANTA_SECRET_KEY='replace-this-secret'
 export VANTA_ADMIN_USERNAME='admin'
 export VANTA_ADMIN_PASSWORD='replace-this-password'
+export VANTA_MFA_CODE='246810'
+export VANTA_DEPLOYMENT_MODE='hybrid'
 ```
 
 Windows PowerShell:
@@ -29,6 +31,8 @@ Windows PowerShell:
 $env:VANTA_SECRET_KEY='replace-this-secret'
 $env:VANTA_ADMIN_USERNAME='admin'
 $env:VANTA_ADMIN_PASSWORD='replace-this-password'
+$env:VANTA_MFA_CODE='246810'
+$env:VANTA_DEPLOYMENT_MODE='hybrid'
 ```
 
 ## 2) Start VANTA Controller
@@ -39,6 +43,7 @@ Expected:
 - OpenFlow listener on port `6653`
 - Dashboard on `http://localhost:5000`
 - Default login: `admin / mtd2024`
+- Demo MFA code: `246810`
 
 ## 3) Start Mininet (New Terminal)
 ```bash
@@ -76,6 +81,9 @@ python benchmark_suite.py --test all
 - `GET /api/mappings`
 - `GET/POST /api/strategy`
 - `POST /api/morph/force`
+- `GET /api/access/context`
+- `GET /api/deployment/profile`
+- `GET /api/health`
 
 ## Quick Validation Checklist
 - Controller sees switch connection.
