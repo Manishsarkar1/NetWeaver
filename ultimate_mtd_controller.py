@@ -40,7 +40,7 @@ from ryu.lib.packet import packet, ethernet, arp, ipv4, icmp, tcp, udp
 from ryu.controller.ofp_handler import OFPHandler
 from ryu.lib import hub
 
-from flask import Flask, render_template_string, jsonify, request, redirect, url_for, send_file, session
+from flask import Flask, render_template, render_template_string, jsonify, request, redirect, url_for, send_file, session
 from flask_socketio import SocketIO, emit
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -52,7 +52,7 @@ import csv
 import io
 from datetime import datetime, timedelta
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 
 from vanta_core import (
     AccessContext,
@@ -1177,8 +1177,8 @@ def login():
             login_user(User(username, users_db[username]['role']),
                        remember=True)
             return redirect(url_for('index'))
-        return render_template_string(LOGIN_HTML, error='Invalid credentials')
-    return render_template_string(LOGIN_HTML, error=None)
+        return render_template('login.html', error='Invalid credentials')
+    return render_template('login.html', error=None)
 
 
 @flask_app.route('/logout')
@@ -1195,8 +1195,8 @@ def logout():
 @flask_app.route('/')
 @login_required
 def index():
-    return render_template_string(DASHBOARD_HTML,
-                                  username=current_user.username)
+    return render_template('dashboard_ultimate.html',
+                           username=current_user.username)
 
 
 @flask_app.route('/api/health')
