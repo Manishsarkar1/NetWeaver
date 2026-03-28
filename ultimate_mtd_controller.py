@@ -401,6 +401,7 @@ class UltimateMTDController(app_manager.RyuApp):
 
         # Time-based morphing background task
         self._time_morph_task = hub.spawn(self._time_based_morph_loop)
+        self._dashboard_sync_task = hub.spawn(self._dashboard_sync_loop)
 
     # ── Flask ─────────────────────────────────────────────────────────────────
     def _start_flask(self):
@@ -424,6 +425,19 @@ class UltimateMTDController(app_manager.RyuApp):
                     self.logger.info(f"⏰ Time-based morph: {ip1} ↔ {ip2}")
                     self.morph_ip_pair(ip1, ip2, "TIME", trigger='time')
 
+    def _emit_dashboard_state(self):
+        socketio.emit('stats_update', self.stats.get_stats_dict())
+        self._emit_current_mappings()
+        self._update_topology()
+
+    def _dashboard_sync_loop(self):
+        while True:
+            hub.sleep(2)
+            try:
+                self._emit_dashboard_state()
+            except Exception as exc:
+                self.logger.debug(f"Dashboard sync skipped: {exc}")
+
     # ── VIP allocation ────────────────────────────────────────────────────────
     def allocate_vip(self, real_ip):
         """Assign a VIP to real_ip if not already done. Returns the VIP."""
@@ -438,8 +452,7 @@ class UltimateMTDController(app_manager.RyuApp):
         self.stats.vip_allocations   += 1
         self.logger.info(f"  VIP allocated: {real_ip} → {vip}")
         socketio.emit('vip_allocated', {'real_ip': real_ip, 'vip': vip})
-        self._emit_current_mappings()
-        self._update_topology()
+        self._emit_dashboard_state()
         return vip
 
     # ── Core: morph an IP pair ────────────────────────────────────────────────
@@ -503,7 +516,7 @@ class UltimateMTDController(app_manager.RyuApp):
         )
 
         socketio.emit('morph_event', event_dict)
-        self._emit_current_mappings()
+        self._emit_dashboard_state()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _emit_current_mappings(self):
