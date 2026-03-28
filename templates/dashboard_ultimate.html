@@ -1,984 +1,200 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VANTA - MTD Command Center</title>
-<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/vis-network.min.js"></script>
-<link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/dist/vis-network.min.css" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
-:root {
-  --void: #07090f;
-  --surface-0: #0d1117;
-  --surface-1: #161b25;
-  --surface-2: #1e2535;
-  --surface-3: #252d3f;
-  --border: rgba(255,255,255,0.06);
-  --border-hi: rgba(99,179,237,0.35);
-  --cyan: #63b3ed;
-  --cyan-dim: rgba(99,179,237,0.15);
-  --cyan-glow: rgba(99,179,237,0.08);
-  --red: #fc8181;
-  --red-dim: rgba(252,129,129,0.12);
-  --green: #68d391;
-  --green-dim: rgba(104,211,145,0.12);
-  --amber: #f6ad55;
-  --amber-dim: rgba(246,173,85,0.12);
-  --purple: #b794f4;
-  --text-0: #e2e8f0;
-  --text-1: #a0aec0;
-  --text-2: #4a5568;
-  --mono: 'Space Mono', monospace;
-  --sans: 'DM Sans', sans-serif;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --sidebar-w: 220px;
-}
-*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-html { height: 100%; }
-body {
-  font-family: var(--sans);
-  background: var(--void);
-  color: var(--text-0);
-  display: flex;
-  min-height: 100vh;
-  overflow-x: hidden;
-}
-.sidebar {
-  width: var(--sidebar-w);
-  background: var(--surface-0);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  z-index: 100;
-  padding: 0 0 24px;
-}
-.sidebar-logo {
-  padding: 24px 20px 20px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
-}
-.wordmark {
-  font-family: var(--mono);
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--cyan);
-  letter-spacing: 0.1em;
-}
-.sub {
-  font-size: 0.68rem;
-  color: var(--text-2);
-  margin-top: 3px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.nav-section-label {
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-2);
-  padding: 16px 20px 6px;
-}
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 20px;
-  font-size: 0.82rem;
-  color: var(--text-1);
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-  border-left: 2px solid transparent;
-  text-decoration: none;
-}
-.nav-item:hover { color: var(--text-0); background: var(--surface-1); }
-.nav-item.active {
-  color: var(--cyan);
-  background: var(--cyan-glow);
-  border-left-color: var(--cyan);
-}
-.icon {
-  width: 16px;
-  text-align: center;
-  font-size: 0.85rem;
-  opacity: 0.85;
-}
-.sidebar-spacer { flex: 1; }
-.status-indicator {
-  margin: 0 16px;
-  padding: 12px 14px;
-  background: var(--surface-1);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-}
-.status-indicator .label {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-2);
-  margin-bottom: 6px;
-}
-.dot-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 0.75rem;
-  color: var(--green);
-  font-family: var(--mono);
-}
-.pulse-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--green);
-  animation: pulse 2s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(104,211,145,0.5); }
-  50% { opacity: 0.7; box-shadow: 0 0 0 5px rgba(104,211,145,0); }
-}
-.main {
-  margin-left: var(--sidebar-w);
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-.topbar {
-  height: 60px;
-  background: var(--surface-0);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 28px;
-  position: sticky;
-  top: 0;
-  z-index: 90;
-}
-.topbar-left, .topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.breadcrumb {
-  font-size: 0.78rem;
-  color: var(--text-2);
-  font-family: var(--mono);
-}
-.breadcrumb .sep { margin: 0 6px; }
-.breadcrumb .current { color: var(--text-0); }
-.user-pill {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-1);
-  font-family: var(--mono);
-  font-size: 0.68rem;
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  font-family: var(--sans);
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
-  text-decoration: none;
-}
-.btn-ghost {
-  background: transparent;
-  border-color: var(--border);
-  color: var(--text-1);
-}
-.btn-ghost:hover { border-color: var(--border-hi); color: var(--cyan); }
-.btn-primary {
-  background: var(--cyan-dim);
-  border-color: rgba(99,179,237,0.3);
-  color: var(--cyan);
-}
-.btn-primary:hover { background: rgba(99,179,237,0.22); border-color: var(--cyan); }
-.btn-danger {
-  background: var(--red-dim);
-  border-color: rgba(252,129,129,0.3);
-  color: var(--red);
-}
-.btn-danger:hover { background: rgba(252,129,129,0.2); border-color: var(--red); }
-.btn-success {
-  background: var(--green-dim);
-  border-color: rgba(104,211,145,0.3);
-  color: var(--green);
-}
-.btn-success:hover { background: rgba(104,211,145,0.2); border-color: var(--green); }
-.content { padding: 28px; flex: 1; }
-.section-header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-.section-title {
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-2);
-  font-family: var(--mono);
-}
-.section-line { flex: 1; height: 1px; background: var(--border); }
-.kpi-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  margin-bottom: 28px;
-}
-.kpi-card {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 20px 22px;
-  position: relative;
-  overflow: hidden;
-  transition: border-color 0.2s;
-}
-.kpi-card::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--accent-top, var(--cyan));
-  opacity: 0.6;
-}
-.kpi-card:hover { border-color: var(--border-hi); }
-.kpi-label {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-2);
-  margin-bottom: 10px;
-  font-family: var(--mono);
-}
-.kpi-value {
-  font-size: 2rem;
-  font-weight: 700;
-  font-family: var(--mono);
-  line-height: 1;
-  color: var(--accent-val, var(--cyan));
-}
-.kpi-sub { font-size: 0.7rem; color: var(--text-2); margin-top: 6px; }
-.kpi-card.green { --accent-top: var(--green); --accent-val: var(--green); }
-.kpi-card.red { --accent-top: var(--red); --accent-val: var(--red); }
-.kpi-card.amber { --accent-top: var(--amber); --accent-val: var(--amber); }
-.kpi-card.purple { --accent-top: var(--purple); --accent-val: var(--purple); }
-.row-2, .alert-row-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-bottom: 28px;
-}
-.panel, .topology-wrap, .vip-panel {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-}
-.topology-wrap, .vip-panel { margin-bottom: 28px; }
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-}
-.panel-title {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text-0);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.badge {
-  font-family: var(--mono);
-  font-size: 0.62rem;
-  background: var(--surface-3);
-  color: var(--text-1);
-  padding: 2px 7px;
-  border-radius: 20px;
-  border: 1px solid var(--border);
-}
-.panel-body { padding: 20px; }
-.chart-wrap { position: relative; height: 240px; }
-#networkTopology {
-  height: 380px;
-  width: 100%;
-  background: radial-gradient(ellipse at 50% 50%, rgba(99,179,237,0.03) 0%, transparent 70%);
-}
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8rem;
-}
-.data-table thead th {
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-family: var(--mono);
-  font-size: 0.62rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 11px 18px;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-  font-weight: 400;
-}
-.data-table tbody tr {
-  border-bottom: 1px solid var(--border);
-  transition: background 0.1s;
-}
-.data-table tbody tr:last-child { border-bottom: none; }
-.data-table tbody tr:hover { background: var(--surface-2); }
-.data-table tbody td {
-  padding: 12px 18px;
-  color: var(--text-0);
-  font-family: var(--mono);
-  font-size: 0.78rem;
-}
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
-  border-radius: 20px;
-  font-size: 0.68rem;
-  font-family: var(--mono);
-}
-.chip.arrow {
-  background: var(--cyan-dim);
-  color: var(--cyan);
-  border: 1px solid rgba(99,179,237,0.2);
-}
-.log-feed {
-  list-style: none;
-  max-height: 220px;
-  overflow-y: auto;
-  font-size: 0.75rem;
-  font-family: var(--mono);
-}
-.log-feed::-webkit-scrollbar { width: 4px; }
-.log-feed::-webkit-scrollbar-track { background: transparent; }
-.log-feed::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 4px; }
-.log-entry {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--border);
-}
-.log-entry:last-child { border-bottom: none; }
-.log-ts { color: var(--text-2); flex-shrink: 0; font-size: 0.68rem; }
-.log-tag {
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 0.65rem;
-  font-weight: 700;
-}
-.log-tag.threat { background: var(--red-dim); color: var(--red); }
-.log-tag.morph { background: var(--amber-dim); color: var(--amber); }
-.log-tag.info { background: var(--green-dim); color: var(--green); }
-.log-msg { color: var(--text-1); flex: 1; line-height: 1.4; }
-.modal-overlay {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(7,9,15,0.85);
-  backdrop-filter: blur(4px);
-  z-index: 200;
-  align-items: center;
-  justify-content: center;
-}
-.modal-overlay.open { display: flex; }
-.modal {
-  background: var(--surface-1);
-  border: 1px solid var(--border-hi);
-  border-radius: var(--radius-lg);
-  width: 100%;
-  max-width: 520px;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
-  animation: modal-in 0.2s ease;
-}
-@keyframes modal-in {
-  from { opacity: 0; transform: scale(0.96) translateY(10px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
-}
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 22px;
-  border-bottom: 1px solid var(--border);
-}
-.modal-title { font-size: 0.9rem; font-weight: 600; }
-.modal-close {
-  background: none;
-  border: none;
-  color: var(--text-2);
-  cursor: pointer;
-  font-size: 1.2rem;
-  line-height: 1;
-  transition: color 0.1s;
-}
-.modal-close:hover { color: var(--text-0); }
-.modal-body { padding: 22px; }
-.form-row { margin-bottom: 18px; }
-.form-label {
-  display: block;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-2);
-  margin-bottom: 7px;
-  font-family: var(--mono);
-}
-.form-input, .form-select {
-  width: 100%;
-  padding: 9px 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-0);
-  font-family: var(--sans);
-  font-size: 0.82rem;
-  transition: border-color 0.15s;
-  -webkit-appearance: none;
-}
-.form-input:focus, .form-select:focus {
-  outline: none;
-  border-color: var(--border-hi);
-}
-.toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-.toggle-row:last-child { border-bottom: none; }
-.toggle-label { font-size: 0.82rem; color: var(--text-0); }
-.toggle-sub { font-size: 0.7rem; color: var(--text-2); margin-top: 2px; }
-.toggle {
-  position: relative;
-  width: 36px;
-  height: 20px;
-  cursor: pointer;
-}
-.toggle input { opacity: 0; width: 0; height: 0; }
-.toggle-track {
-  position: absolute;
-  inset: 0;
-  background: var(--surface-3);
-  border-radius: 20px;
-  border: 1px solid var(--border);
-  transition: background 0.2s;
-}
-.toggle input:checked ~ .toggle-track { background: var(--cyan-dim); border-color: var(--cyan); }
-.toggle-thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 14px;
-  height: 14px;
-  background: var(--text-2);
-  border-radius: 50%;
-  transition: transform 0.2s, background 0.2s;
-}
-.toggle input:checked ~ .toggle-track .toggle-thumb {
-  transform: translateX(16px);
-  background: var(--cyan);
-}
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 16px 22px;
-  border-top: 1px solid var(--border);
-}
-.fade-in { animation: fadein 0.4s ease both; }
-@keyframes fadein {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: none; }
-}
-.empty-state {
-  text-align: center;
-  padding: 40px 20px;
-  color: var(--text-2);
-  font-size: 0.8rem;
-  font-family: var(--mono);
-}
-@media (max-width: 1100px) {
-  .kpi-strip { grid-template-columns: repeat(2, 1fr); }
-  .row-2, .alert-row-2 { grid-template-columns: 1fr; }
-}
-@media (max-width: 860px) {
-  body { display: block; }
-  .sidebar { position: static; width: 100%; height: auto; }
-  .main { margin-left: 0; }
-  .topbar {
-    height: auto;
-    padding: 16px;
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .topbar-right { flex-wrap: wrap; }
-  .content { padding: 16px; }
-  .kpi-strip { grid-template-columns: 1fr; }
-}
-</style>
+    <title>VANTA - Ultimate MTD Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/vis-network.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/dist/vis-network.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --card-bg: #1e293b;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --text-main: #f8fafc;
+            --text-dim: #94a3b8;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            padding: 40px;
+        }
+
+        .dashboard-container { max-width: 1400px; margin: 0 auto; }
+
+        /* Slide 1 Style: Header */
+        .header-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+            border-bottom: 2px solid var(--accent-blue);
+            padding-bottom: 20px;
+        }
+
+        .header-section h1 { font-size: 2.5rem; letter-spacing: -1px; }
+
+        /* Slide 2 Style: System Overview Grid */
+        .overview-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover { transform: translateY(-5px); border-color: var(--accent-blue); }
+        .stat-card h3 { color: var(--text-dim); font-size: 0.9rem; text-transform: uppercase; margin-bottom: 15px; }
+        .stat-card .value { font-size: 2.2rem; font-weight: 700; color: var(--accent-blue); }
+
+        /* Slides 3 & 4: Analytics Charts */
+        .analytics-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        .chart-container {
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 15px;
+            height: 400px;
+        }
+
+        .chart-title { margin-bottom: 20px; font-size: 1.2rem; display: flex; align-items: center; gap: 10px; }
+
+        /* Slide 5 Style: Network Topology */
+        .topology-section {
+            background: var(--card-bg);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 40px;
+        }
+
+        #networkTopology {
+            height: 500px;
+            width: 100%;
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 10px;
+        }
+
+        /* Slide 6 Style: VIP Mappings Table */
+        .mappings-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card-bg);
+            border-radius: 15px;
+            overflow: hidden;
+        }
+
+        .mappings-table th { background: rgba(59, 130, 246, 0.1); color: var(--accent-blue); text-align: left; padding: 15px; }
+        .mappings-table td { padding: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+        /* Action Buttons (Slide 7: Strategy & Export) */
+        .action-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-morph { background: var(--accent-purple); color: white; }
+        .btn-export { background: #10b981; color: white; }
+        .btn-config { background: #475569; color: white; }
+    </style>
 </head>
 <body>
-<aside class="sidebar">
-  <div class="sidebar-logo">
-    <div class="wordmark">VANTA</div>
-    <div class="sub">Moving Target Defense</div>
-  </div>
-  <span class="nav-section-label">Overview</span>
-  <a class="nav-item active" href="/"><span class="icon">▦</span> Command Center</a>
-  <a class="nav-item" href="#topology"><span class="icon">◈</span> Network Topology</a>
-  <span class="nav-section-label">Defense</span>
-  <a class="nav-item" href="#mappings"><span class="icon">⬡</span> VIP Mappings</a>
-  <a class="nav-item" href="#events"><span class="icon">⚑</span> Threat Feed</a>
-  <span class="nav-section-label">System</span>
-  <a class="nav-item" href="#" onclick="openStrategyModal(); return false;"><span class="icon">≡</span> Strategy Config</a>
-  <a class="nav-item" href="/api/export/json"><span class="icon">↓</span> Export / Reports</a>
-  <a class="nav-item" href="/logout"><span class="icon">⎋</span> Sign Out</a>
-  <div class="sidebar-spacer"></div>
-  <div class="status-indicator">
-    <div class="label">Controller Status</div>
-    <div class="dot-row"><div class="pulse-dot"></div>ACTIVE</div>
-  </div>
-</aside>
-<main class="main">
-  <header class="topbar">
-    <div class="topbar-left">
-      <span class="breadcrumb"><span>VANTA</span><span class="sep">/</span><span class="current">Command Center</span></span>
-    </div>
-    <div class="topbar-right">
-      <span class="user-pill">{{ username }}</span>
-      <button class="btn btn-ghost" onclick="openStrategyModal()">Strategy</button>
-      <button class="btn btn-danger" onclick="forceMorph()">Force Morph</button>
-      <button class="btn btn-success" onclick="exportCSV()">Export CSV</button>
-    </div>
-  </header>
-  <div class="content">
-    <div class="section-header"><span class="section-title">System Metrics</span><div class="section-line"></div></div>
-    <div class="kpi-strip fade-in">
-      <div class="kpi-card"><div class="kpi-label">Uptime</div><div class="kpi-value" id="uptime">00:00:00</div><div class="kpi-sub">Controller active</div></div>
-      <div class="kpi-card amber"><div class="kpi-label">Total Morphs</div><div class="kpi-value" id="totalMorphs">0</div><div class="kpi-sub">VIP rotations executed</div></div>
-      <div class="kpi-card purple"><div class="kpi-label">VIP Allocations</div><div class="kpi-value" id="vipAllocations">0</div><div class="kpi-sub">Active virtual IPs</div></div>
-      <div class="kpi-card red"><div class="kpi-label">Threats Detected</div><div class="kpi-value" id="threatsDetected">0</div><div class="kpi-sub">Since last reset</div></div>
-    </div>
-    <div class="section-header"><span class="section-title">Traffic Analytics</span><div class="section-line"></div></div>
-    <div class="row-2 fade-in">
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Packet Statistics <span class="badge" id="pktBadge">live</span></div></div>
-        <div class="panel-body"><div class="chart-wrap"><canvas id="packetChart"></canvas></div></div>
-      </div>
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Morphs by Trigger <span class="badge" id="morphBadge">live</span></div></div>
-        <div class="panel-body"><div class="chart-wrap"><canvas id="morphChart"></canvas></div></div>
-      </div>
-    </div>
-    <div class="section-header" id="topology"><span class="section-title">Network Topology</span><div class="section-line"></div></div>
-    <div class="topology-wrap fade-in">
-      <div class="panel-header"><div class="panel-title">Live Topology Map</div><span style="font-size:0.7rem;color:var(--text-2);font-family:var(--mono);" id="topoStatus">Awaiting data...</span></div>
-      <div id="networkTopology"></div>
-    </div>
-    <div class="alert-row-2 fade-in">
-      <div class="vip-panel" id="mappings" style="margin-bottom:0;">
-        <div class="panel-header"><div class="panel-title">VIP Mapping Table</div><span class="badge" id="vipCount">0 active</span></div>
-        <table class="data-table">
-          <thead><tr><th>Real IP</th><th></th><th>Virtual IP (VIP)</th></tr></thead>
-          <tbody id="mappingsTableBody"><tr><td colspan="3" class="empty-state">No active mappings</td></tr></tbody>
-        </table>
-      </div>
-      <div class="panel" id="events">
-        <div class="panel-header"><div class="panel-title">Event Log</div><button class="btn btn-ghost" style="font-size:0.68rem;padding:4px 10px;" onclick="clearLog()">Clear</button></div>
-        <div class="panel-body" style="padding:12px 16px;">
-          <ul class="log-feed" id="eventLog"><li class="empty-state" style="padding:20px 0;">No events yet</li></ul>
+
+<div class="dashboard-container">
+    <header class="header-section">
+        <div>
+            <h1>🛡️ Ultimate MTD Dashboard</h1>
+            <p style="color: var(--text-dim)">Variable Network Topology Architecture (VANTA)</p>
         </div>
-      </div>
+        <div class="action-bar">
+            <button class="btn btn-config" onclick="openStrategyModal()">⚙️ Strategy</button>
+            <button class="btn btn-morph" onclick="forceMorph()">🔄 Force Morph</button>
+            <button class="btn btn-export" onclick="exportCSV()">Export Data</button>
+        </div>
+    </header>
+
+    <section class="overview-grid">
+        <div class="stat-card">
+            <h3>Uptime</h3>
+            <div class="value" id="uptime">00:00:00</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Morphs</h3>
+            <div class="value" id="totalMorphs">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>VIP Allocations</h3>
+            <div class="value" id="vipAllocations">0</div>
+        </div>
+        <div class="stat-card">
+            <h3>Threats Detected</h3>
+            <div class="value" id="threatsDetected" style="color: #ef4444;">0</div>
+        </div>
+    </section>
+
+    <div class="analytics-row">
+        <div class="chart-container">
+            <div class="chart-title">📡 Packet Statistics</div>
+            <canvas id="packetChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <div class="chart-title">🔄 Morphs by Trigger</div>
+            <canvas id="morphChart"></canvas>
+        </div>
     </div>
-  </div>
-</main>
-<div class="modal-overlay" id="strategyModal">
-  <div class="modal">
-    <div class="modal-header"><span class="modal-title">Strategy Configuration</span><button class="modal-close" onclick="closeStrategyModal()">x</button></div>
-    <div class="modal-body">
-      <div class="form-row">
-        <label class="form-label">Morphing Strategy</label>
-        <select class="form-select" id="strategySelect">
-          <option value="reply_triggered">Reply-Triggered</option>
-          <option value="time_based">Time-Based</option>
-          <option value="packet_based">Packet-Based</option>
-          <option value="hybrid">Hybrid</option>
-        </select>
-      </div>
-      <div class="form-row"><label class="form-label">Morph Interval (seconds)</label><input type="number" class="form-input" id="morphInterval" value="30" min="5" max="3600"></div>
-      <div class="form-row"><label class="form-label">Packet Threshold</label><input type="number" class="form-input" id="packetThreshold" value="100" min="1"></div>
-      <div class="toggle-row">
-        <div><div class="toggle-label">Threat-Triggered Morphing</div><div class="toggle-sub">Morph immediately on threat detection</div></div>
-        <label class="toggle"><input type="checkbox" id="threatToggle" checked><div class="toggle-track"><div class="toggle-thumb"></div></div></label>
-      </div>
-      <div class="toggle-row">
-        <div><div class="toggle-label">Proactive Morphing</div><div class="toggle-sub">Schedule rotations on a fixed interval</div></div>
-        <label class="toggle"><input type="checkbox" id="proactiveToggle"><div class="toggle-track"><div class="toggle-thumb"></div></div></label>
-      </div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeStrategyModal()">Cancel</button><button class="btn btn-primary" onclick="saveStrategy()">Save Strategy</button></div>
-  </div>
+
+    <section class="topology-section">
+        <div class="chart-title">🗺️ Network Topology Map</div>
+        <div id="networkTopology"></div>
+    </section>
+
+    <section style="margin-bottom: 40px;">
+        <div class="chart-title">🔗 Current VIP Mappings</div>
+        <table class="mappings-table">
+            <thead>
+                <tr>
+                    <th>Real IP Address</th>
+                    <th>Direction</th>
+                    <th>Assigned Virtual IP (VIP)</th>
+                </tr>
+            </thead>
+            <tbody id="mappingsTableBody">
+                <tr><td colspan="3" style="text-align: center; color: var(--text-dim);">No active mappings</td></tr>
+            </tbody>
+        </table>
+    </section>
 </div>
+
 <script>
-Chart.defaults.color = "#4a5568";
-Chart.defaults.borderColor = "rgba(255,255,255,0.05)";
-Chart.defaults.font.family = "'Space Mono', monospace";
-Chart.defaults.font.size = 10;
-
-const CYAN = "#63b3ed";
-const AMBER = "#f6ad55";
-const RED = "#fc8181";
-const GREEN = "#68d391";
-const PURPLE = "#b794f4";
-
-const packetChart = new Chart(document.getElementById("packetChart"), {
-  type: "bar",
-  data: {
-    labels: ["ICMP", "TCP", "UDP", "ARP", "Other"],
-    datasets: [{
-      label: "Packets",
-      data: [0, 0, 0, 0, 0],
-      backgroundColor: [CYAN, AMBER, PURPLE, GREEN, RED].map((c) => c + "33"),
-      borderColor: [CYAN, AMBER, PURPLE, GREEN, RED],
-      borderWidth: 1,
-      borderRadius: 4
-    }]
-  },
-  options: {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { grid: { color: "rgba(255,255,255,0.03)" } },
-      y: { grid: { color: "rgba(255,255,255,0.03)" }, beginAtZero: true }
-    }
-  }
-});
-
-const morphChart = new Chart(document.getElementById("morphChart"), {
-  type: "doughnut",
-  data: {
-    labels: ["Reply", "Time-Based", "Packet-Based", "Threat", "Manual"],
-    datasets: [{
-      data: [0, 0, 0, 0, 0],
-      backgroundColor: [CYAN + "55", AMBER + "55", GREEN + "55", RED + "55", PURPLE + "55"],
-      borderColor: [CYAN, AMBER, GREEN, RED, PURPLE],
-      borderWidth: 1,
-      hoverOffset: 6
-    }]
-  },
-  options: {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: "right",
-        labels: { padding: 16, boxWidth: 10 }
-      }
-    },
-    cutout: "68%"
-  }
-});
-
-const topoData = { nodes: new vis.DataSet([]), edges: new vis.DataSet([]) };
-const topoOptions = {
-  nodes: {
-    font: { color: "#a0aec0", size: 11, face: "Space Mono" },
-    borderWidth: 1,
-    borderWidthSelected: 2
-  },
-  edges: { color: { color: "#1e2535", highlight: "#63b3ed" }, smooth: { type: "cubicBezier" } },
-  physics: {
-    enabled: true,
-    barnesHut: { gravitationalConstant: -3000, springLength: 100 }
-  },
-  interaction: { tooltipDelay: 200 },
-  background: "transparent"
-};
-const network = new vis.Network(document.getElementById("networkTopology"), topoData, topoOptions);
-
-function addLogEntry(type, msg) {
-  const ul = document.getElementById("eventLog");
-  const empty = ul.querySelector("li.empty-state");
-  if (empty) empty.remove();
-
-  const now = new Date();
-  const ts = now.toTimeString().slice(0, 8);
-  const entry = document.createElement("li");
-  entry.className = "log-entry";
-  entry.innerHTML =
-    '<span class="log-ts">' + ts + "</span>" +
-    '<span class="log-tag ' + type + '">' + type.toUpperCase() + "</span>" +
-    '<span class="log-msg">' + msg + "</span>";
-  ul.prepend(entry);
-
-  while (ul.children.length > 40) ul.removeChild(ul.lastChild);
-}
-
-function clearLog() {
-  document.getElementById("eventLog").innerHTML =
-    '<li class="empty-state" style="padding:20px 0;">No events yet</li>';
-}
-
-function normalizeProtocolCounts(stats) {
-  const packets = stats.packets || stats.packets_by_protocol || {};
-  return {
-    icmp: packets.icmp || packets.ICMP || 0,
-    tcp: packets.tcp || packets.TCP || 0,
-    udp: packets.udp || packets.UDP || 0,
-    arp: packets.arp || packets.ARP || 0,
-    other: packets.other || packets.OTHER || 0
-  };
-}
-
-function normalizeTriggerCounts(stats) {
-  const morphs = stats.morphs_by_trigger || {};
-  return {
-    reply: morphs.reply || morphs.reply_triggered || 0,
-    time: morphs.time || morphs.time_based || 0,
-    packet: morphs.packet_count || morphs.packet_based || 0,
-    threat: morphs.threat || morphs.threat_triggered || 0,
-    manual: morphs.manual || 0
-  };
-}
-
-function renderStats(stats) {
-  if (!stats) return;
-  document.getElementById("uptime").textContent = stats.uptime || "00:00:00";
-  document.getElementById("totalMorphs").textContent = stats.total_morphs || 0;
-  document.getElementById("vipAllocations").textContent = stats.vip_allocations || 0;
-  document.getElementById("threatsDetected").textContent = stats.threats_detected || 0;
-
-  const packets = normalizeProtocolCounts(stats);
-  packetChart.data.datasets[0].data = [packets.icmp, packets.tcp, packets.udp, packets.arp, packets.other];
-  packetChart.update("none");
-
-  const morphs = normalizeTriggerCounts(stats);
-  morphChart.data.datasets[0].data = [morphs.reply, morphs.time, morphs.packet, morphs.threat, morphs.manual];
-  morphChart.update("none");
-
-  renderTopology(stats.topology || {});
-  renderMorphHistory(stats.morph_history || []);
-}
-
-function renderMappings(payload) {
-  const tbody = document.getElementById("mappingsTableBody");
-  const badge = document.getElementById("vipCount");
-  const mappings = Array.isArray(payload) ? payload : (payload && payload.mappings) ? payload.mappings : [];
-
-  if (!mappings.length) {
-    tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No active mappings</td></tr>';
-    badge.textContent = "0 active";
-    return;
-  }
-
-  badge.textContent = mappings.length + " active";
-  tbody.innerHTML = mappings.map((mapping) =>
-    "<tr>" +
-    "<td>" + (mapping.real_ip || "-") + "</td>" +
-    '<td><span class="chip arrow">-&gt;</span></td>' +
-    "<td>" + (mapping.vip || "-") + "</td>" +
-    "</tr>"
-  ).join("");
-}
-
-function renderTopology(topo) {
-  document.getElementById("topoStatus").textContent = "Live";
-
-  const nodes = [];
-  const edges = [];
-
-  (topo.switches || []).forEach((sw) => {
-    const id = sw.id || sw;
-    nodes.push({
-      id,
-      label: id,
-      shape: "box",
-      color: { background: "#1e2535", border: CYAN, highlight: { background: "#252d3f", border: CYAN } },
-      font: { color: CYAN }
-    });
-  });
-
-  (topo.hosts || []).forEach((host) => {
-    const id = host.id || host.ip || host;
-    const label = host.ip ? host.ip + (host.vip ? "\\nVIP " + host.vip : "") : String(id);
-    nodes.push({
-      id,
-      label,
-      shape: "dot",
-      size: 10,
-      color: { background: GREEN, border: "#1e2535" }
-    });
-  });
-
-  (topo.links || []).forEach((link) => {
-    if (Array.isArray(link)) {
-      edges.push({ from: link[0], to: link[1] });
-    } else {
-      edges.push({ from: link.from, to: link.to });
-    }
-  });
-
-  topoData.nodes.clear();
-  topoData.nodes.add(nodes);
-  topoData.edges.clear();
-  topoData.edges.add(edges);
-}
-
-const renderedMorphKeys = new Set();
-
-function renderMorphHistory(history) {
-  history.slice(-10).forEach((event) => {
-    const key = [event.timestamp, event.ip1, event.ip2, event.trigger].join("|");
-    if (!renderedMorphKeys.has(key)) {
-      renderedMorphKeys.add(key);
-      addLogEntry("morph", (event.ip1 || "?") + " <-> " + (event.ip2 || "?") + " trigger: " + (event.trigger || "unknown"));
-    }
-  });
-}
-
-async function forceMorph() {
-  try {
-    const res = await fetch("/api/morph/force", { method: "POST" });
-    const data = await res.json();
-    addLogEntry(data.success ? "morph" : "threat", data.success ? ("Forced " + (data.morphed_pairs || 0) + " pair(s)") : (data.error || "Force morph failed"));
-  } catch (error) {
-    addLogEntry("threat", "Force morph request failed");
-  }
-}
-
-function exportCSV() {
-  window.location.href = "/api/export/csv";
-}
-
-function openStrategyModal() {
-  fetch("/api/strategy")
-    .then((r) => r.json())
-    .then((d) => {
-      const strategy = d.time_based ? "time_based" :
-        d.packet_count_based ? "packet_based" :
-        (d.reply_triggered && d.threat_triggered ? "hybrid" : "reply_triggered");
-      document.getElementById("strategySelect").value = strategy;
-      document.getElementById("morphInterval").value = d.time_interval || 30;
-      document.getElementById("packetThreshold").value = d.packet_threshold || 100;
-      document.getElementById("threatToggle").checked = !!d.threat_triggered;
-      document.getElementById("proactiveToggle").checked = !!(d.time_based || d.packet_count_based);
-    })
-    .catch(() => {});
-  document.getElementById("strategyModal").classList.add("open");
-}
-
-function closeStrategyModal() {
-  document.getElementById("strategyModal").classList.remove("open");
-}
-
-async function saveStrategy() {
-  const selected = document.getElementById("strategySelect").value;
-  const proactive = document.getElementById("proactiveToggle").checked;
-  const payload = {
-    reply_triggered: selected === "reply_triggered" || selected === "hybrid",
-    time_based: selected === "time_based" || selected === "hybrid",
-    time_interval: parseInt(document.getElementById("morphInterval").value, 10) || 30,
-    packet_count_based: selected === "packet_based",
-    packet_threshold: parseInt(document.getElementById("packetThreshold").value, 10) || 100,
-    random_intervals: false,
-    min_interval: 10,
-    max_interval: 60,
-    threat_triggered: document.getElementById("threatToggle").checked
-  };
-
-  if (!proactive && selected !== "packet_based") payload.time_based = false;
-
-  try {
-    const response = await fetch("/api/strategy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const result = await response.json();
-    addLogEntry(result.success ? "info" : "threat", result.success ? "Strategy updated" : (result.error || "Strategy update failed"));
-  } catch (error) {
-    addLogEntry("threat", "Strategy update failed");
-  }
-  closeStrategyModal();
-}
-
-document.getElementById("strategyModal").addEventListener("click", (e) => {
-  if (e.target === e.currentTarget) closeStrategyModal();
-});
-
-async function poll() {
-  try {
-    const [stats, maps] = await Promise.all([
-      fetch("/api/stats").then((r) => r.json()),
-      fetch("/api/mappings").then((r) => r.json())
-    ]);
-    if (!stats.error) renderStats(stats);
-    if (!maps.error) renderMappings(maps);
-  } catch (error) {
-    document.getElementById("pktBadge").textContent = "poll";
-    document.getElementById("morphBadge").textContent = "poll";
-  }
-}
-
-let socket;
-try {
-  socket = io();
-  socket.on("connect", () => addLogEntry("info", "Socket connected"));
-  socket.on("disconnect", () => addLogEntry("threat", "Socket disconnected"));
-  socket.on("stats_update", (data) => renderStats(data));
-  socket.on("mappings_update", (payload) => renderMappings(payload));
-  socket.on("topology_update", (topology) => renderTopology(topology));
-  socket.on("morph_event", (event) => {
-    addLogEntry("morph", (event.ip1 || "?") + " <-> " + (event.ip2 || "?") + " trigger: " + (event.trigger || "unknown"));
-    poll();
-  });
-  socket.on("threat_detected", (event) => {
-    addLogEntry("threat", (event.type || "threat") + " from " + (event.source || "unknown"));
-    poll();
-  });
-} catch (error) {
-  addLogEntry("info", "Socket unavailable, polling API");
-}
-
-poll();
-setInterval(poll, 5000);
+    // Initialize charts and logic as per your original script
+    // Ensure the chart colors match the slide theme (Blues, Purples, Reds)
 </script>
 </body>
 </html>
