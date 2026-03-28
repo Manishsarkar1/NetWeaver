@@ -52,7 +52,7 @@ import csv
 import io
 from datetime import datetime, timedelta
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 
 from vanta_core import (
     MorphEvent as CoreMorphEvent,
