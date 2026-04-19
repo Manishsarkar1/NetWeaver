@@ -1,0 +1,35 @@
+{
+  "mode": "enforce",
+  "default_policy": {
+    "approved": false,
+    "expected_capabilities": [
+      "flow_stats",
+      "port_stats"
+    ],
+    "min_ports": 1,
+    "flow_constraints": {
+      "max_idle_timeout": 60,
+      "max_hard_timeout": 0,
+      "allow_buffer_id": true,
+      "allow_packet_out": true
+    },
+    "notes": "Devices are blocked by default until explicitly approved."
+  },
+  "devices": {
+    "1": {
+      "approved": true,
+      "expected_capabilities": [
+        "flow_stats",
+        "port_stats"
+      ],
+      "min_ports": 1,
+      "flow_constraints": {
+        "max_idle_timeout": 30,
+        "max_hard_timeout": 0,
+        "allow_buffer_id": true,
+        "allow_packet_out": true
+      },
+      "notes": "Example lab or pilot switch."
+    }
+  }
+}

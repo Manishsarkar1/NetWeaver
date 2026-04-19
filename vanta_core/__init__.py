@@ -4,10 +4,19 @@ from .access_control import AccessContext, AccessDecision, ZeroTrustAccessPolicy
 from .config import RuntimeConfig, build_user_store, load_runtime_config
 from .deployment import DeploymentProfile, load_deployment_profile
 from .defense import MorphingStrategy, ThreatDetector
+from .hardware_policy import (
+    FlowConstraintPolicy,
+    HardwareDevicePolicy,
+    HardwareInventoryPolicy,
+    HardwarePolicyDecision,
+    load_hardware_inventory_policy,
+)
 from .models import MorphEvent, ThreatEvent
 from .network_adapters import (
     BaseNetworkAdapter,
     NetworkBackendDescriptor,
+    OpenFlowDeviceRecord,
+    OpenFlowHardwareAdapter,
     PlannedHardwareAdapter,
     RyuOpenFlowAdapter,
     build_network_adapter,
@@ -22,11 +31,17 @@ __all__ = [
     "AccessContext",
     "AccessDecision",
     "DeploymentProfile",
+    "FlowConstraintPolicy",
+    "HardwareDevicePolicy",
+    "HardwareInventoryPolicy",
+    "HardwarePolicyDecision",
     "MorphEvent",
     "MorphingStrategy",
     "BaseNetworkAdapter",
     "InMemoryVIPMapper",
     "NetworkBackendDescriptor",
+    "OpenFlowDeviceRecord",
+    "OpenFlowHardwareAdapter",
     "PlannedHardwareAdapter",
     "RedisBackedVIPMapper",
     "RyuOpenFlowAdapter",
@@ -37,6 +52,7 @@ __all__ = [
     "build_network_adapter",
     "build_vip_mapper",
     "build_user_store",
+    "load_hardware_inventory_policy",
     "load_deployment_profile",
     "load_runtime_config",
 ]

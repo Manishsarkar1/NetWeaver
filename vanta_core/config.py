@@ -1,5 +1,14 @@
 from dataclasses import dataclass
 import os
+from pathlib import Path
+
+
+def _default_hardware_inventory_path():
+    packaged = Path(__file__).resolve().parent.parent / "vanta" / "defaults" / "hardware_inventory.json"
+    if packaged.exists():
+        return str(packaged)
+    repo_local = Path(__file__).resolve().parent.parent / "config" / "hardware_inventory.json"
+    return str(repo_local)
 
 
 @dataclass(frozen=True)
@@ -13,6 +22,8 @@ class RuntimeConfig:
     default_mfa_code: str = "246810"
     network_backend: str = "ryu_openflow"
     network_target: str = "mininet"
+    hardware_inventory_path: str = _default_hardware_inventory_path()
+    hardware_rollout_mode: str = "enforce"
     vip_mapping_backend: str = "memory"
     vip_persistence_ttl_seconds: int = 60
     redis_url: str = "redis://localhost:6379/0"
@@ -34,6 +45,14 @@ def load_runtime_config():
         default_mfa_code=os.getenv("VANTA_MFA_CODE", "246810"),
         network_backend=os.getenv("VANTA_NETWORK_BACKEND", "ryu_openflow").lower(),
         network_target=os.getenv("VANTA_NETWORK_TARGET", "mininet").lower(),
+        hardware_inventory_path=os.getenv(
+            "VANTA_HARDWARE_INVENTORY_PATH",
+            _default_hardware_inventory_path(),
+        ),
+        hardware_rollout_mode=os.getenv(
+            "VANTA_HARDWARE_ROLLOUT_MODE",
+            "enforce",
+        ).lower(),
         vip_mapping_backend=os.getenv("VANTA_VIP_MAPPING_BACKEND", "memory").lower(),
         vip_persistence_ttl_seconds=int(
             os.getenv("VANTA_VIP_PERSISTENCE_TTL_SECONDS", "60")

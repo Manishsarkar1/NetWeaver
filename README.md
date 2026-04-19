@@ -83,6 +83,8 @@ flowchart TB
 - This repo now includes a Redis-backed VIP mapper for crash resilience. The controller still runs as one Ryu instance, but active VIP assignments can survive a controller restart as long as the Redis lease has not expired.
 - VIP persistence TTL is aligned to the active morph interval when time-based morphing is enabled, and falls back to `VANTA_VIP_PERSISTENCE_TTL_SECONDS` for reply-triggered or threat-triggered deployments.
 - The controller now has a pluggable network backend boundary. `ryu_openflow` is the active adapter today, while `openflow_hardware`, `netconf`, and `p4runtime` are scaffolded as planned backends for product-grade switch integration.
+- `openflow_hardware` is now a real adapter for OpenFlow-capable switches and bare-metal OVS endpoints. It keeps device inventory, requests port descriptions, exposes capability metadata, and uses the same flow-programming path against non-Mininet datapaths.
+- `openflow_hardware` now reads [config/hardware_inventory.json](/C:/Users/sarka/OneDrive/Desktop/minor/VANTA-Variable-Network-Topology-Architecture-/config/hardware_inventory.json) and enforces per-switch rollout policy before enabling non-bootstrap flow programming.
 
 ## Quick Start
 ```bash
@@ -123,6 +125,24 @@ sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 # demo MFA code: 246810
 ```
 
+## Product-Oriented Install
+```bash
+# Local install
+pip install .
+
+# Run the controller through the packaged CLI
+vanta controller
+
+# Or directly
+vanta-controller
+```
+
+### Docker Startup
+```bash
+docker build -t vanta:latest .
+docker run --rm -p 5000:5000 -p 6653:6653 vanta:latest
+```
+
 ### Redis-backed VIP Persistence
 ```bash
 # Start Redis if you want crash-resilient VIP mappings
@@ -144,11 +164,22 @@ $env:VANTA_VIP_PERSISTENCE_TTL_SECONDS='60'
 # Current lab default
 export VANTA_NETWORK_BACKEND='ryu_openflow'
 export VANTA_NETWORK_TARGET='mininet'
+export VANTA_HARDWARE_INVENTORY_PATH='config/hardware_inventory.json'
+export VANTA_HARDWARE_ROLLOUT_MODE='enforce'
 
-# Productization scaffolds for future hardware support
+# Real OpenFlow hardware path
 export VANTA_NETWORK_BACKEND='openflow_hardware'
+export VANTA_NETWORK_TARGET='bare_metal_ovs'
+
+# Example vendor-target labels for inventory and rollout policy
 export VANTA_NETWORK_TARGET='cisco_catalyst'
 ```
+
+### Hardware Rollout Policy
+- Devices are blocked by default until explicitly approved in [config/hardware_inventory.json](/C:/Users/sarka/OneDrive/Desktop/minor/VANTA-Variable-Network-Topology-Architecture-/config/hardware_inventory.json).
+- `mode=enforce` blocks non-bootstrap flow programming on unapproved switches.
+- `mode=audit` logs policy violations but still allows flow installation for staged rollouts.
+- Per-device policy can require specific OpenFlow capabilities, a minimum discovered port count, and flow constraints such as max idle timeout or disallowing buffer IDs.
 
 ## API Surface
 | Endpoint | Method | Purpose |
@@ -158,6 +189,7 @@ export VANTA_NETWORK_TARGET='cisco_catalyst'
 | `/api/strategy` | `GET/POST` | Read or update active morphing strategy settings |
 | `/api/morph/force` | `POST` | Force immediate morphing of active IP pairs |
 | `/api/access/context` | `GET` | Current access-control context and last policy decision |
+| `/api/network/devices` | `GET` | Current switch inventory, discovered OpenFlow capabilities, and known port metadata |
 | `/api/deployment/profile` | `GET` | Active deployment profile metadata |
 | `/api/health` | `GET` | Service health, deployment mode, telemetry level, and active network backend metadata |
 | `/api/export/csv` | `GET` | Export morph history as CSV |

@@ -1,4 +1,7 @@
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass, field
+from typing import Dict, List
+
+from .hardware_policy import load_hardware_inventory_policy
 
 
 @dataclass(frozen=True)
@@ -10,6 +13,39 @@ class NetworkBackendDescriptor:
     supports_flow_programming: bool
     supports_packet_io: bool
     status: str
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class OpenFlowDeviceRecord:
+    dpid: int
+    target: str
+    connected: bool = True
+    negotiated_version: str = "unknown"
+    n_buffers: int = 0
+    n_tables: int = 0
+    auxiliary_id: int = 0
+    capabilities: List[str] = field(default_factory=list)
+    ports: List[dict] = field(default_factory=list)
+    policy_status: str = "unknown"
+    policy_reasons: List[str] = field(default_factory=list)
+    expected_capabilities: List[str] = field(default_factory=list)
+    flow_constraints: dict = field(default_factory=dict)
+
+    def to_switch_summary(self):
+        return {
+            "dpid": self.dpid,
+            "id": f"s{self.dpid}",
+            "target": self.target,
+            "connected": self.connected,
+            "capabilities": list(self.capabilities),
+            "port_count": len(self.ports),
+            "negotiated_version": self.negotiated_version,
+            "policy_status": self.policy_status,
+            "policy_reasons": list(self.policy_reasons),
+        }
 
     def to_dict(self):
         return asdict(self)
@@ -31,12 +67,18 @@ class BaseNetworkAdapter:
     def __init__(self, logger=None):
         self._logger = logger
 
-    def register_switch(self, datapaths, datapath):
+    def register_switch(self, datapaths, datapath, features_msg=None):
         datapaths[datapath.id] = datapath
         return datapath.id
 
+    def handle_port_desc_reply(self, msg):
+        return None
+
     def list_switches(self, datapaths):
         return [{"dpid": dpid, "id": f"s{dpid}"} for dpid in datapaths]
+
+    def get_device_inventory(self):
+        return []
 
     def install_controller_table_miss(self, datapath):
         raise NotImplementedError
@@ -51,7 +93,9 @@ class BaseNetworkAdapter:
         raise NotImplementedError
 
     def get_backend_metadata(self):
-        return self.descriptor.to_dict()
+        metadata = self.descriptor.to_dict()
+        metadata["device_count"] = len(self.get_device_inventory())
+        return metadata
 
 
 class RyuOpenFlowAdapter(BaseNetworkAdapter):
@@ -84,9 +128,10 @@ class RyuOpenFlowAdapter(BaseNetworkAdapter):
             idle_timeout=idle,
             hard_timeout=hard,
         )
-        if buffer_id:
+        if buffer_id is not None:
             kwargs["buffer_id"] = buffer_id
         datapath.send_msg(parser.OFPFlowMod(**kwargs))
+        return True
 
     def install_packet_flow(self, datapath, in_port, out_port, pkt, buffer_id=None):
         protocols = getattr(pkt, "protocols", [])
@@ -96,7 +141,7 @@ class RyuOpenFlowAdapter(BaseNetworkAdapter):
         parser = datapath.ofproto_parser
         match = parser.OFPMatch(in_port=in_port, eth_dst=eth.dst, eth_src=eth.src)
         actions = [parser.OFPActionOutput(out_port)]
-        self.install_flow(datapath, 1, match, actions, idle=30, buffer_id=buffer_id)
+        return self.install_flow(datapath, 1, match, actions, idle=30, buffer_id=buffer_id)
 
     def forward_packet(self, datapath, msg, in_port, out_port):
         ofproto = datapath.ofproto
@@ -111,6 +156,179 @@ class RyuOpenFlowAdapter(BaseNetworkAdapter):
             data=data,
         )
         datapath.send_msg(out)
+        return True
+
+
+class OpenFlowHardwareAdapter(RyuOpenFlowAdapter):
+    """Production-oriented adapter for real OpenFlow endpoints such as bare-metal OVS."""
+
+    def __init__(self, target="openflow_switch", inventory_path="config/hardware_inventory.json", rollout_mode="enforce", logger=None):
+        super().__init__(logger=logger)
+        self.descriptor = NetworkBackendDescriptor(
+            name="openflow_hardware",
+            transport="openflow13",
+            target=target,
+            supports_physical_switches=True,
+            supports_flow_programming=True,
+            supports_packet_io=True,
+            status="active",
+        )
+        self._device_inventory: Dict[int, OpenFlowDeviceRecord] = {}
+        self._policy = load_hardware_inventory_policy(inventory_path, mode=rollout_mode)
+        self._inventory_path = inventory_path
+
+    def register_switch(self, datapaths, datapath, features_msg=None):
+        dpid = super().register_switch(datapaths, datapath, features_msg=features_msg)
+        record = self._build_device_record(datapath, features_msg)
+        self._apply_policy(record)
+        self._device_inventory[dpid] = record
+        self._request_port_descriptions(datapath)
+        return dpid
+
+    def handle_port_desc_reply(self, msg):
+        datapath = msg.datapath
+        record = self._device_inventory.get(datapath.id)
+        if record is None:
+            return None
+        record.ports = [self._serialize_port(port) for port in getattr(msg, "body", [])]
+        self._apply_policy(record)
+        return record.to_dict()
+
+    def list_switches(self, datapaths):
+        if self._device_inventory:
+            return [
+                self._device_inventory[dpid].to_switch_summary()
+                for dpid in sorted(self._device_inventory)
+            ]
+        return super().list_switches(datapaths)
+
+    def get_device_inventory(self):
+        return [
+            self._device_inventory[dpid].to_dict()
+            for dpid in sorted(self._device_inventory)
+        ]
+
+    def get_backend_metadata(self):
+        metadata = super().get_backend_metadata()
+        metadata["inventory_path"] = self._inventory_path
+        metadata["rollout_mode"] = self._policy.mode
+        metadata["approved_device_count"] = sum(
+            1 for record in self._device_inventory.values()
+            if record.policy_status == "approved"
+        )
+        return metadata
+
+    def install_flow(self, datapath, priority, match, actions, idle=0, hard=0, buffer_id=None):
+        if priority > 0:
+            decision = self._ensure_flow_allowed(datapath.id)
+            constraints = decision.flow_constraints
+            idle = min(idle, constraints.max_idle_timeout) if constraints.max_idle_timeout >= 0 else idle
+            hard = min(hard, constraints.max_hard_timeout) if constraints.max_hard_timeout > 0 else hard
+            if not constraints.allow_buffer_id:
+                buffer_id = None
+        return super().install_flow(
+            datapath,
+            priority,
+            match,
+            actions,
+            idle=idle,
+            hard=hard,
+            buffer_id=buffer_id,
+        )
+
+    def forward_packet(self, datapath, msg, in_port, out_port):
+        record = self._device_inventory.get(datapath.id)
+        if record and not record.flow_constraints.get("allow_packet_out", True):
+            if self._logger:
+                self._logger.warning(
+                    "Packet-out skipped for s%s due to hardware rollout policy.",
+                    datapath.id,
+                )
+            return False
+        return super().forward_packet(datapath, msg, in_port, out_port)
+
+    def _ensure_flow_allowed(self, dpid):
+        record = self._device_inventory.get(dpid)
+        if record is None:
+            raise RuntimeError(f"Unknown hardware datapath {dpid}.")
+        if record.policy_status == "approved":
+            return self._policy.evaluate_device(record)
+
+        message = (
+            f"Hardware rollout policy blocked flow programming on s{dpid}: "
+            + ", ".join(record.policy_reasons or ["device_not_approved"])
+        )
+        if self._policy.mode == "audit":
+            if self._logger:
+                self._logger.warning(message + " (audit mode, continuing)")
+            return self._policy.evaluate_device(record)
+        raise RuntimeError(message)
+
+    def _apply_policy(self, record):
+        decision = self._policy.evaluate_device(record)
+        record.policy_status = "approved" if decision.approved else "blocked"
+        record.policy_reasons = list(decision.reasons)
+        record.expected_capabilities = list(decision.expected_capabilities)
+        record.flow_constraints = decision.flow_constraints.to_dict()
+
+    def _build_device_record(self, datapath, features_msg):
+        ofproto = datapath.ofproto
+        version_value = getattr(getattr(datapath, "ofproto", None), "OFP_VERSION", None)
+        version_text = "unknown" if version_value is None else f"0x{version_value:02x}"
+
+        return OpenFlowDeviceRecord(
+            dpid=datapath.id,
+            target=self.descriptor.target,
+            negotiated_version=version_text,
+            n_buffers=getattr(features_msg, "n_buffers", 0),
+            n_tables=getattr(features_msg, "n_tables", 0),
+            auxiliary_id=getattr(features_msg, "auxiliary_id", 0),
+            capabilities=self._decode_capabilities(ofproto, getattr(features_msg, "capabilities", 0)),
+        )
+
+    def _request_port_descriptions(self, datapath):
+        parser = datapath.ofproto_parser
+        ofproto = datapath.ofproto
+        request_cls = getattr(parser, "OFPPortDescStatsRequest", None)
+        if request_cls is None:
+            return
+        datapath.send_msg(request_cls(datapath, 0, ofproto.OFPP_ANY))
+
+    @staticmethod
+    def _decode_capabilities(ofproto, capability_bits):
+        names = [
+            ("OFPC_FLOW_STATS", "flow_stats"),
+            ("OFPC_TABLE_STATS", "table_stats"),
+            ("OFPC_PORT_STATS", "port_stats"),
+            ("OFPC_GROUP_STATS", "group_stats"),
+            ("OFPC_IP_REASM", "ip_reassembly"),
+            ("OFPC_QUEUE_STATS", "queue_stats"),
+            ("OFPC_PORT_BLOCKED", "port_blocked"),
+        ]
+        decoded = []
+        for attr_name, label in names:
+            attr_value = getattr(ofproto, attr_name, None)
+            if attr_value is not None and capability_bits & attr_value:
+                decoded.append(label)
+        return decoded
+
+    @staticmethod
+    def _serialize_port(port):
+        return {
+            "port_no": getattr(port, "port_no", None),
+            "name": OpenFlowHardwareAdapter._coerce_port_name(getattr(port, "name", "")),
+            "hw_addr": getattr(port, "hw_addr", ""),
+            "config": getattr(port, "config", 0),
+            "state": getattr(port, "state", 0),
+            "curr_speed": getattr(port, "curr_speed", 0),
+            "max_speed": getattr(port, "max_speed", 0),
+        }
+
+    @staticmethod
+    def _coerce_port_name(name):
+        if isinstance(name, bytes):
+            return name.decode("utf-8", errors="ignore").rstrip("\x00")
+        return str(name).rstrip("\x00")
 
 
 class PlannedHardwareAdapter(BaseNetworkAdapter):
@@ -154,10 +372,10 @@ def build_network_adapter(config, logger=None):
     if backend == "ryu_openflow":
         return RyuOpenFlowAdapter(logger=logger)
     if backend == "openflow_hardware":
-        return PlannedHardwareAdapter(
-            name="openflow_hardware",
-            transport="openflow13",
+        return OpenFlowHardwareAdapter(
             target=target,
+            inventory_path=config.hardware_inventory_path,
+            rollout_mode=config.hardware_rollout_mode,
             logger=logger,
         )
     if backend == "netconf":

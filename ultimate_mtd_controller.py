@@ -59,6 +59,7 @@ import io
 from datetime import datetime, timedelta
 from collections import defaultdict
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from vanta_core import (
     AccessContext,
@@ -89,7 +90,10 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────────────────────
 runtime_config = load_runtime_config()
 deployment_profile = load_deployment_profile(runtime_config.deployment_mode)
-flask_app = Flask(__name__)
+template_root = Path(__file__).resolve().parent / "templates"
+if not template_root.exists():
+    template_root = Path(__file__).resolve().parent / "vanta" / "templates"
+flask_app = Flask(__name__, template_folder=str(template_root))
 flask_app.config['SECRET_KEY'] = runtime_config.secret_key
 flask_app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
     hours=runtime_config.session_lifetime_hours
@@ -579,18 +583,16 @@ class UltimateMTDController(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
-        ofproto  = datapath.ofproto
-        parser   = datapath.ofproto_parser
-        dpid     = datapath.id
+        dpid = self.network_adapter.register_switch(
+            self.datapaths,
+            datapath,
+            features_msg=ev.msg,
+        )
 
-        self.datapaths[dpid] = datapath
         self.logger.info(f"✓ Switch s{dpid} connected")
 
         # Table-miss: send everything to controller
-        match   = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                          ofproto.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 0, match, actions)
+        self.network_adapter.install_controller_table_miss(datapath)
         self._update_topology()
 
     def add_flow(self, datapath, priority, match, actions,
@@ -927,6 +929,19 @@ class UltimateMTDController(app_manager.RyuApp):
     def _ensure_vips(self, *ips):
         for ip in ips:
             self.allocate_vip(ip)
+
+    @set_ev_cls(ofp_event.EventOFPPortDescStatsReply, MAIN_DISPATCHER)
+    def port_desc_stats_reply_handler(self, ev):
+        device = self.network_adapter.handle_port_desc_reply(ev.msg)
+        if device:
+            self.logger.info(
+                f"Port inventory updated for s{device['dpid']} "
+                f"({len(device.get('ports', []))} ports)"
+            )
+            self._update_topology()
+
+    def get_network_devices(self):
+        return self.network_adapter.get_device_inventory()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1345,7 +1360,7 @@ def health_check():
         'deployment_mode': deployment_profile.mode,
         'telemetry_level': deployment_profile.telemetry_level,
         'network_backend': (
-            controller_instance.network_adapter.descriptor.to_dict()
+            controller_instance.network_adapter.get_backend_metadata()
             if controller_instance else {
                 'name': runtime_config.network_backend,
                 'transport': runtime_config.network_backend,
@@ -1354,6 +1369,7 @@ def health_check():
                 'supports_flow_programming': False,
                 'supports_packet_io': False,
                 'status': 'configured',
+                'device_count': 0,
             }
         ),
         'vip_mapping_backend': (
@@ -1361,6 +1377,17 @@ def health_check():
             if controller_instance else runtime_config.vip_mapping_backend
         ),
     })
+
+
+@flask_app.route('/api/network/devices')
+@login_required
+def network_devices():
+    decision = _enforce_access('/api/network/devices')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
+    if not controller_instance:
+        return jsonify({'devices': []})
+    return jsonify({'devices': controller_instance.get_network_devices()})
 
 
 @flask_app.route('/api/deployment/profile')

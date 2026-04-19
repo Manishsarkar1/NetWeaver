@@ -1,0 +1,1764 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VANTA - MTD Command Center</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/vis-network.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/dist/vis-network.min.css" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --void: #07090f;
+      --surface-0: #0d1117;
+      --surface-1: #161b25;
+      --surface-2: #1e2535;
+      --surface-3: #252d3f;
+      --border: rgba(255, 255, 255, 0.06);
+      --border-hi: rgba(99, 179, 237, 0.35);
+      --cyan: #63b3ed;
+      --cyan-dim: rgba(99, 179, 237, 0.15);
+      --cyan-glow: rgba(99, 179, 237, 0.08);
+      --red: #fc8181;
+      --red-dim: rgba(252, 129, 129, 0.12);
+      --green: #68d391;
+      --green-dim: rgba(104, 211, 145, 0.12);
+      --amber: #f6ad55;
+      --amber-dim: rgba(246, 173, 85, 0.12);
+      --purple: #b794f4;
+      --text-0: #e2e8f0;
+      --text-1: #a0aec0;
+      --text-2: #4a5568;
+      --mono: "Space Mono", monospace;
+      --sans: "DM Sans", sans-serif;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --sidebar-w: 220px;
+    }
+
+    *,
+    *::before,
+    *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      height: 100%;
+    }
+
+    body {
+      font-family: var(--sans);
+      background: var(--void);
+      color: var(--text-0);
+      display: flex;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ═══════════════════════════════════════════════
+   PAGE TRANSITION LOADER
+═══════════════════════════════════════════════ */
+    #page-loader {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: var(--void);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+
+    #page-loader.visible {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    #page-loader.fade-out {
+      opacity: 0;
+      transition: opacity 0.4s ease 0.15s;
+    }
+
+    /* The main VANTA logo mark */
+    .loader-logo-wrap {
+      position: relative;
+      width: 120px;
+      height: 120px;
+      margin-bottom: 28px;
+    }
+
+    /* Outer rotating ring */
+    .loader-ring-outer {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1px solid transparent;
+      border-top-color: var(--cyan);
+      border-right-color: rgba(99, 179, 237, 0.3);
+      animation: ring-spin-slow 2.4s linear infinite;
+    }
+
+    /* Middle counter-rotating ring */
+    .loader-ring-mid {
+      position: absolute;
+      inset: 14px;
+      border-radius: 50%;
+      border: 1px solid transparent;
+      border-bottom-color: rgba(183, 148, 244, 0.8);
+      border-left-color: rgba(183, 148, 244, 0.2);
+      animation: ring-spin-slow 1.8s linear infinite reverse;
+    }
+
+    /* Inner ring */
+    .loader-ring-inner {
+      position: absolute;
+      inset: 28px;
+      border-radius: 50%;
+      border: 1px solid transparent;
+      border-top-color: rgba(104, 211, 145, 0.7);
+      animation: ring-spin-slow 1.2s linear infinite;
+    }
+
+    /* Center hex */
+    .loader-hex {
+      position: absolute;
+      inset: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .loader-hex svg {
+      width: 100%;
+      height: 100%;
+      animation: hex-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes ring-spin-slow {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes hex-pulse {
+
+      0%,
+      100% {
+        opacity: 0.9;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 1;
+        transform: scale(1.06);
+      }
+    }
+
+    /* Orbiting dots */
+    .loader-orbit {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      animation: ring-spin-slow 3s linear infinite;
+    }
+
+    .loader-orbit::before,
+    .loader-orbit::after {
+      content: "";
+      position: absolute;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--cyan);
+      top: -2.5px;
+      left: calc(50% - 2.5px);
+      box-shadow: 0 0 8px var(--cyan);
+    }
+
+    .loader-orbit::after {
+      top: auto;
+      bottom: -2.5px;
+      background: var(--purple);
+      box-shadow: 0 0 8px var(--purple);
+    }
+
+    /* Wordmark */
+    .loader-wordmark {
+      font-family: var(--mono);
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: 0.35em;
+      color: var(--cyan);
+      text-transform: uppercase;
+      animation: wordmark-flicker 0.1s step-end 3;
+      position: relative;
+    }
+
+    .loader-wordmark::after {
+      content: attr(data-text);
+      position: absolute;
+      inset: 0;
+      color: var(--purple);
+      clip-path: polygon(0 55%, 100% 55%, 100% 70%, 0 70%);
+      transform: translateX(2px);
+      opacity: 0.45;
+      animation: glitch-slice 3s infinite 1s;
+    }
+
+    @keyframes wordmark-flicker {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      33% {
+        opacity: 0;
+      }
+
+      66% {
+        opacity: 0.8;
+      }
+    }
+
+    @keyframes glitch-slice {
+
+      0%,
+      92%,
+      100% {
+        clip-path: polygon(0 55%, 100% 55%, 100% 70%, 0 70%);
+        transform: translateX(2px);
+        opacity: 0.45;
+      }
+
+      93% {
+        clip-path: polygon(0 30%, 100% 30%, 100% 50%, 0 50%);
+        transform: translateX(-4px);
+        opacity: 0.6;
+      }
+
+      95% {
+        clip-path: polygon(0 70%, 100% 70%, 100% 85%, 0 85%);
+        transform: translateX(3px);
+        opacity: 0.5;
+      }
+
+      97% {
+        clip-path: polygon(0 10%, 100% 10%, 100% 25%, 0 25%);
+        transform: translateX(-2px);
+        opacity: 0.3;
+      }
+    }
+
+    /* Tagline */
+    .loader-tagline {
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--text-2);
+      margin-top: 6px;
+      animation: fade-up 0.6s ease both 0.2s;
+    }
+
+    @keyframes fade-up {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Module label */
+    .loader-module {
+      margin-top: 28px;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.12em;
+      color: var(--cyan);
+      opacity: 0.7;
+      text-transform: uppercase;
+      animation: fade-up 0.4s ease both 0.1s;
+    }
+
+    /* Scanline progress bar */
+    .loader-bar-track {
+      margin-top: 14px;
+      width: 160px;
+      height: 2px;
+      background: var(--surface-2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .loader-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--cyan), var(--purple));
+      border-radius: 2px;
+      width: 0%;
+      animation: bar-fill 0.7s cubic-bezier(0.4, 0, 0.2, 1) forwards 0.05s;
+    }
+
+    @keyframes bar-fill {
+      to {
+        width: 100%;
+      }
+    }
+
+    /* Scanline overlay on loader */
+    #page-loader::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(0deg,
+          transparent,
+          transparent 3px,
+          rgba(99, 179, 237, 0.01) 3px,
+          rgba(99, 179, 237, 0.01) 4px);
+      pointer-events: none;
+      animation: scan-move 8s linear infinite;
+    }
+
+    @keyframes scan-move {
+      to {
+        background-position: 0 100%;
+      }
+    }
+
+    /* Corner decorations on loader */
+    #page-loader::after {
+      content: "";
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      top: 30px;
+      left: 30px;
+      border-top: 1px solid rgba(99, 179, 237, 0.2);
+      border-left: 1px solid rgba(99, 179, 237, 0.2);
+      pointer-events: none;
+    }
+
+    .loader-corner-br {
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      bottom: 30px;
+      right: 30px;
+      border-bottom: 1px solid rgba(99, 179, 237, 0.2);
+      border-right: 1px solid rgba(99, 179, 237, 0.2);
+      pointer-events: none;
+    }
+
+    .loader-corner-tr {
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      top: 30px;
+      right: 30px;
+      border-top: 1px solid rgba(99, 179, 237, 0.2);
+      border-right: 1px solid rgba(99, 179, 237, 0.2);
+      pointer-events: none;
+    }
+
+    .loader-corner-bl {
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      bottom: 30px;
+      left: 30px;
+      border-bottom: 1px solid rgba(99, 179, 237, 0.2);
+      border-left: 1px solid rgba(99, 179, 237, 0.2);
+      pointer-events: none;
+    }
+
+    /* Content fade */
+    .content-fade {
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+
+    .content-fade.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ═══════════════════════════════════════════════
+   EXISTING SIDEBAR / MAIN STYLES
+═══════════════════════════════════════════════ */
+    .sidebar {
+      width: var(--sidebar-w);
+      background: var(--surface-0);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 100;
+      padding: 0 0 24px;
+    }
+
+    .sidebar-logo {
+      padding: 24px 20px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    .sidebar-logo .wordmark {
+      font-family: var(--mono);
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--cyan);
+      letter-spacing: 0.1em;
+      position: relative;
+      display: inline-block;
+    }
+
+    /* Sidebar logo subtle shimmer */
+    .sidebar-logo .wordmark::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 60%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(99, 179, 237, 0.15), transparent);
+      animation: shimmer-logo 4s ease-in-out infinite 2s;
+    }
+
+    @keyframes shimmer-logo {
+      0% {
+        left: -100%;
+      }
+
+      40%,
+      100% {
+        left: 150%;
+      }
+    }
+
+    .sidebar-logo .sub {
+      font-size: 0.68rem;
+      color: var(--text-2);
+      margin-top: 3px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .nav-section-label {
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-2);
+      padding: 16px 20px 6px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 20px;
+      font-size: 0.82rem;
+      color: var(--text-1);
+      cursor: pointer;
+      transition: color 0.15s, background 0.15s;
+      border-left: 2px solid transparent;
+      text-decoration: none;
+    }
+
+    .nav-item:hover {
+      color: var(--text-0);
+      background: var(--surface-1);
+    }
+
+    .nav-item.active {
+      color: var(--cyan);
+      background: var(--cyan-glow);
+      border-left-color: var(--cyan);
+    }
+
+    .nav-item .icon {
+      width: 16px;
+      text-align: center;
+      font-size: 0.85rem;
+      opacity: 0.85;
+    }
+
+    .sidebar-spacer {
+      flex: 1;
+    }
+
+    .status-indicator {
+      margin: 0 16px;
+      padding: 12px 14px;
+      background: var(--surface-1);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+    }
+
+    .status-indicator .label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-2);
+      margin-bottom: 6px;
+    }
+
+    .status-indicator .dot-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.75rem;
+      color: var(--green);
+      font-family: var(--mono);
+    }
+
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        box-shadow: 0 0 0 0 rgba(104, 211, 145, 0.5);
+      }
+
+      50% {
+        opacity: 0.7;
+        box-shadow: 0 0 0 5px rgba(104, 211, 145, 0);
+      }
+    }
+
+    .main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .topbar {
+      height: 60px;
+      background: var(--surface-0);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      position: sticky;
+      top: 0;
+      z-index: 90;
+    }
+
+    .topbar-left,
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .breadcrumb {
+      font-size: 0.78rem;
+      color: var(--text-2);
+      font-family: var(--mono);
+    }
+
+    .breadcrumb .sep {
+      margin: 0 6px;
+    }
+
+    .breadcrumb .current {
+      color: var(--text-0);
+    }
+
+    .user-pill {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text-1);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      font-family: var(--sans);
+      font-size: 0.78rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      border-color: var(--border);
+      color: var(--text-1);
+    }
+
+    .btn-ghost:hover {
+      border-color: var(--border-hi);
+      color: var(--cyan);
+    }
+
+    .btn-primary {
+      background: var(--cyan-dim);
+      border-color: rgba(99, 179, 237, 0.3);
+      color: var(--cyan);
+    }
+
+    .btn-primary:hover {
+      background: rgba(99, 179, 237, 0.22);
+      border-color: var(--cyan);
+    }
+
+    .btn-danger {
+      background: var(--red-dim);
+      border-color: rgba(252, 129, 129, 0.3);
+      color: var(--red);
+    }
+
+    .btn-danger:hover {
+      background: rgba(252, 129, 129, 0.2);
+      border-color: var(--red);
+    }
+
+    .btn-success {
+      background: var(--green-dim);
+      border-color: rgba(104, 211, 145, 0.3);
+      color: var(--green);
+    }
+
+    .btn-success:hover {
+      background: rgba(104, 211, 145, 0.2);
+      border-color: var(--green);
+    }
+
+    .content {
+      padding: 28px;
+      flex: 1;
+    }
+
+    .view-section {
+      display: none;
+    }
+
+    .view-section.active {
+      display: block;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-2);
+      font-family: var(--mono);
+    }
+
+    .section-line {
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+
+    .kpi-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 20px 22px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .kpi-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent-top, var(--cyan));
+      opacity: 0.6;
+    }
+
+    .kpi-label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-2);
+      margin-bottom: 10px;
+      font-family: var(--mono);
+    }
+
+    .kpi-value {
+      font-size: 2rem;
+      font-weight: 700;
+      font-family: var(--mono);
+      line-height: 1;
+      color: var(--accent-val, var(--cyan));
+    }
+
+    .kpi-sub {
+      font-size: 0.7rem;
+      color: var(--text-2);
+      margin-top: 6px;
+    }
+
+    .kpi-card.green {
+      --accent-top: var(--green);
+      --accent-val: var(--green);
+    }
+
+    .kpi-card.red {
+      --accent-top: var(--red);
+      --accent-val: var(--red);
+    }
+
+    .kpi-card.amber {
+      --accent-top: var(--amber);
+      --accent-val: var(--amber);
+    }
+
+    .kpi-card.purple {
+      --accent-top: var(--purple);
+      --accent-val: var(--purple);
+    }
+
+    .row-2,
+    .alert-row-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+
+    .panel,
+    .topology-wrap,
+    .vip-panel {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .topology-wrap {
+      margin-bottom: 28px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-0);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-title .badge,
+    .badge {
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      background: var(--surface-3);
+      color: var(--text-1);
+      padding: 2px 7px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+    }
+
+    .panel-body {
+      padding: 20px;
+    }
+
+    .chart-wrap {
+      position: relative;
+      height: 240px;
+    }
+
+    .topology-wrap #networkTopology {
+      height: 380px;
+      width: 100%;
+      background: radial-gradient(ellipse at 50% 50%, rgba(99, 179, 237, 0.03) 0%, transparent 70%);
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+
+    .data-table thead th {
+      background: var(--surface-2);
+      color: var(--text-2);
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 11px 18px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-weight: 400;
+    }
+
+    .data-table tbody tr {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .data-table tbody tr:last-child {
+      border-bottom: none;
+    }
+
+    .data-table tbody tr:hover {
+      background: var(--surface-2);
+    }
+
+    .data-table tbody td {
+      padding: 12px 18px;
+      color: var(--text-0);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 20px;
+      font-size: 0.68rem;
+      font-family: var(--mono);
+    }
+
+    .chip.arrow {
+      background: var(--cyan-dim);
+      color: var(--cyan);
+      border: 1px solid rgba(99, 179, 237, 0.2);
+    }
+
+    .log-feed {
+      list-style: none;
+      max-height: 220px;
+      overflow-y: auto;
+      font-size: 0.75rem;
+      font-family: var(--mono);
+    }
+
+    .log-entry {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .log-entry:last-child {
+      border-bottom: none;
+    }
+
+    .log-ts {
+      color: var(--text-2);
+      flex-shrink: 0;
+      font-size: 0.68rem;
+    }
+
+    .log-tag {
+      flex-shrink: 0;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 0.65rem;
+      font-weight: 700;
+    }
+
+    .log-tag.threat {
+      background: var(--red-dim);
+      color: var(--red);
+    }
+
+    .log-tag.morph {
+      background: var(--amber-dim);
+      color: var(--amber);
+    }
+
+    .log-tag.info {
+      background: var(--green-dim);
+      color: var(--green);
+    }
+
+    .log-msg {
+      color: var(--text-1);
+      flex: 1;
+      line-height: 1.4;
+    }
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(7, 9, 15, 0.85);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal {
+      background: var(--surface-1);
+      border: 1px solid var(--border-hi);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 520px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-2);
+      cursor: pointer;
+      font-size: 1.2rem;
+    }
+
+    .modal-body {
+      padding: 22px;
+    }
+
+    .form-row {
+      margin-bottom: 18px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-2);
+      margin-bottom: 7px;
+      font-family: var(--mono);
+    }
+
+    .form-input,
+    .form-select {
+      width: 100%;
+      padding: 9px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-0);
+      font-family: var(--sans);
+      font-size: 0.82rem;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .toggle-row:last-child {
+      border-bottom: none;
+    }
+
+    .toggle-label {
+      font-size: 0.82rem;
+      color: var(--text-0);
+    }
+
+    .toggle-sub {
+      font-size: 0.7rem;
+      color: var(--text-2);
+      margin-top: 2px;
+    }
+
+    .toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      cursor: pointer;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--surface-3);
+      border-radius: 20px;
+      border: 1px solid var(--border);
+    }
+
+    .toggle input:checked~.toggle-track {
+      background: var(--cyan-dim);
+      border-color: var(--cyan);
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 14px;
+      height: 14px;
+      background: var(--text-2);
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+
+    .toggle input:checked~.toggle-track .toggle-thumb {
+      transform: translateX(16px);
+      background: var(--cyan);
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 16px 22px;
+      border-top: 1px solid var(--border);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-2);
+      font-size: 0.8rem;
+      font-family: var(--mono);
+    }
+
+    @media (max-width: 1100px) {
+      .kpi-strip {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .row-2,
+      .alert-row-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 860px) {
+      body {
+        display: block;
+      }
+
+      .sidebar {
+        position: static;
+        width: 100%;
+        height: auto;
+      }
+
+      .main {
+        margin-left: 0;
+      }
+
+      .topbar {
+        height: auto;
+        padding: 16px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+      }
+
+      .topbar-right {
+        flex-wrap: wrap;
+      }
+
+      .content {
+        padding: 16px;
+      }
+
+      .kpi-strip {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ════════════════════════════════════
+     PAGE TRANSITION LOADER
+════════════════════════════════════ -->
+  <div id="page-loader">
+    <div class="loader-corner-br"></div>
+    <div class="loader-corner-tr"></div>
+    <div class="loader-corner-bl"></div>
+
+    <div class="loader-logo-wrap">
+      <div class="loader-ring-outer"></div>
+      <div class="loader-ring-mid"></div>
+      <div class="loader-ring-inner"></div>
+      <div class="loader-orbit"></div>
+      <div class="loader-hex">
+        <!-- VANTA hex icon -->
+        <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="22,2 40,12 40,32 22,42 4,32 4,12" fill="none" stroke="#63b3ed" stroke-width="1.2"
+            stroke-linejoin="round" />
+          <polygon points="22,10 33,16.5 33,27.5 22,34 11,27.5 11,16.5" fill="rgba(99,179,237,0.08)"
+            stroke="rgba(99,179,237,0.4)" stroke-width="0.8" />
+          <line x1="22" y1="2" x2="22" y2="42" stroke="rgba(99,179,237,0.12)" stroke-width="0.5" />
+          <line x1="4" y1="12" x2="40" y2="32" stroke="rgba(99,179,237,0.12)" stroke-width="0.5" />
+          <line x1="40" y1="12" x2="4" y2="32" stroke="rgba(99,179,237,0.12)" stroke-width="0.5" />
+          <circle cx="22" cy="22" r="4" fill="none" stroke="#63b3ed" stroke-width="1.2" />
+          <circle cx="22" cy="22" r="1.5" fill="#63b3ed" />
+        </svg>
+      </div>
+    </div>
+
+    <div class="loader-wordmark" data-text="VANTA">VANTA</div>
+    <div class="loader-tagline">Moving Target Defense</div>
+    <div class="loader-module" id="loader-module-label">Initializing...</div>
+    <div class="loader-bar-track">
+      <div class="loader-bar-fill" id="loader-bar"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════
+     SIDEBAR
+════════════════════════════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="wordmark">VANTA</div>
+      <div class="sub">Moving Target Defense</div>
+    </div>
+    <span class="nav-section-label">Overview</span>
+    <a class="nav-item active" href="#" data-view="command-center"><span class="icon">▦</span> Command Center</a>
+    <a class="nav-item" href="#" data-view="topology"><span class="icon">◈</span> Network Topology</a>
+    <span class="nav-section-label">Defense</span>
+    <a class="nav-item" href="#" data-view="history"><span class="icon">⟳</span> Morph History</a>
+    <a class="nav-item" href="#" data-view="mappings"><span class="icon">⬡</span> VIP Mappings</a>
+    <a class="nav-item" href="#" data-view="events"><span class="icon">⚑</span> Threat Feed</a>
+    <span class="nav-section-label">System</span>
+    <a class="nav-item" href="#" onclick="openStrategyModal(); return false;"><span class="icon">≡</span> Strategy
+      Config</a>
+    <a class="nav-item" href="/api/export/json"><span class="icon">↓</span> Export / Reports</a>
+    <a class="nav-item" href="/logout"><span class="icon">⎋</span> Sign Out</a>
+    <div class="sidebar-spacer"></div>
+    <div class="status-indicator">
+      <div class="label">Controller Status</div>
+      <div class="dot-row">
+        <div class="pulse-dot"></div>ACTIVE
+      </div>
+    </div>
+  </aside>
+
+  <!-- ════════════════════════════════════
+     MAIN
+════════════════════════════════════ -->
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="breadcrumb"><span>VANTA</span><span class="sep">/</span><span class="current"
+            id="currentViewLabel">Command Center</span></span>
+      </div>
+      <div class="topbar-right">
+        <span class="user-pill">{{ username }}</span>
+        <button class="btn btn-ghost" onclick="openStrategyModal()">⚙ Strategy</button>
+        <button class="btn btn-danger" onclick="forceMorph()">⟳ Force Morph</button>
+        <button class="btn btn-success" onclick="exportCSV()">↓ Export CSV</button>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- Command Center -->
+      <section class="view-section active content-fade visible" data-view-section="command-center">
+        <div class="section-header"><span class="section-title">System Metrics</span>
+          <div class="section-line"></div>
+        </div>
+        <div class="kpi-strip">
+          <div class="kpi-card">
+            <div class="kpi-label">Uptime</div>
+            <div class="kpi-value" id="uptime">00:00:00</div>
+            <div class="kpi-sub">Controller active</div>
+          </div>
+          <div class="kpi-card amber">
+            <div class="kpi-label">Total Morphs</div>
+            <div class="kpi-value" id="totalMorphs">0</div>
+            <div class="kpi-sub">VIP rotations executed</div>
+          </div>
+          <div class="kpi-card purple">
+            <div class="kpi-label">VIP Allocations</div>
+            <div class="kpi-value" id="vipAllocations">0</div>
+            <div class="kpi-sub">Active virtual IPs</div>
+          </div>
+          <div class="kpi-card red">
+            <div class="kpi-label">Threats Detected</div>
+            <div class="kpi-value" id="threatsDetected">0</div>
+            <div class="kpi-sub">Since last reset</div>
+          </div>
+        </div>
+        <div class="section-header"><span class="section-title">Traffic Analytics</span>
+          <div class="section-line"></div>
+        </div>
+        <div class="row-2">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Packet Statistics <span class="badge" id="pktBadge">live</span></div>
+            </div>
+            <div class="panel-body">
+              <div class="chart-wrap"><canvas id="packetChart"></canvas></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Morphs by Trigger <span class="badge" id="morphBadge">live</span></div>
+            </div>
+            <div class="panel-body">
+              <div class="chart-wrap"><canvas id="morphChart"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Topology -->
+      <section class="view-section content-fade" data-view-section="topology">
+        <div class="section-header"><span class="section-title">Network Topology</span>
+          <div class="section-line"></div>
+        </div>
+        <div class="topology-wrap">
+          <div class="panel-header">
+            <div class="panel-title">Live Topology Map</div><span
+              style="font-size:0.7rem;color:var(--text-2);font-family:var(--mono);" id="topoStatus">Awaiting
+              data...</span>
+          </div>
+          <div id="networkTopology"></div>
+        </div>
+      </section>
+
+      <!-- History -->
+      <section class="view-section content-fade" data-view-section="history">
+        <div class="section-header"><span class="section-title">Morph History</span>
+          <div class="section-line"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Recent Morph Events</div>
+          </div>
+          <div class="panel-body" style="padding:12px 16px;">
+            <ul class="log-feed" id="historyLog">
+              <li class="empty-state" style="padding:20px 0;">No morph events yet</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Mappings -->
+      <section class="view-section content-fade" data-view-section="mappings">
+        <div class="section-header"><span class="section-title">VIP Mappings</span>
+          <div class="section-line"></div>
+        </div>
+        <div class="vip-panel" id="mappings">
+          <div class="panel-header">
+            <div class="panel-title">VIP Mapping Table</div><span class="badge" id="vipCount">0 active</span>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Real IP</th>
+                <th></th>
+                <th>Virtual IP (VIP)</th>
+              </tr>
+            </thead>
+            <tbody id="mappingsTableBody">
+              <tr>
+                <td colspan="3" class="empty-state">No active mappings</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Events -->
+      <section class="view-section content-fade" data-view-section="events">
+        <div class="section-header"><span class="section-title">Threat Feed</span>
+          <div class="section-line"></div>
+        </div>
+        <div class="panel" id="events">
+          <div class="panel-header">
+            <div class="panel-title">Event Log</div><button class="btn btn-ghost"
+              style="font-size:0.68rem;padding:4px 10px;" onclick="clearLog()">Clear</button>
+          </div>
+          <div class="panel-body" style="padding:12px 16px;">
+            <ul class="log-feed" id="eventLog">
+              <li class="empty-state" style="padding:20px 0;">No events yet</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Strategy Modal -->
+  <div class="modal-overlay" id="strategyModal">
+    <div class="modal">
+      <div class="modal-header"><span class="modal-title">⚙ Strategy Configuration</span><button class="modal-close"
+          onclick="closeStrategyModal()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label class="form-label">Morphing Strategy</label>
+          <select class="form-select" id="strategySelect">
+            <option value="time_based">Time-Based</option>
+            <option value="packet_based">Packet-Based</option>
+            <option value="threat_triggered">Threat-Triggered</option>
+            <option value="hybrid">Hybrid</option>
+          </select>
+        </div>
+        <div class="form-row"><label class="form-label">Morph Interval (seconds)</label><input type="number"
+            class="form-input" id="morphInterval" value="30" min="5" max="3600"></div>
+        <div class="form-row"><label class="form-label">Packet Threshold</label><input type="number" class="form-input"
+            id="packetThreshold" value="100" min="1"></div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Threat-Triggered Morphing</div>
+            <div class="toggle-sub">Morph immediately on threat detection</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="threatToggle" checked>
+            <div class="toggle-track">
+              <div class="toggle-thumb"></div>
+            </div>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Proactive Morphing</div>
+            <div class="toggle-sub">Schedule rotations on a fixed interval</div>
+          </div>
+          <label class="toggle"><input type="checkbox" id="proactiveToggle" checked>
+            <div class="toggle-track">
+              <div class="toggle-thumb"></div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeStrategyModal()">Cancel</button><button
+          class="btn btn-primary" onclick="saveStrategy()">Save Strategy</button></div>
+    </div>
+  </div>
+
+  <script>
+    /* ──────────────────────────────────────────
+       LOADER ENGINE
+    ────────────────────────────────────────── */
+    const viewLabels = {
+      "command-center": "Command Center",
+      "topology": "Network Topology",
+      "history": "Morph History",
+      "mappings": "VIP Mappings",
+      "events": "Threat Feed"
+    };
+
+    const moduleMessages = {
+      "command-center": "Loading Command Center...",
+      "topology": "Mapping Network Topology...",
+      "history": "Fetching Morph History...",
+      "mappings": "Syncing VIP Mappings...",
+      "events": "Tuning Threat Feed..."
+    };
+
+    let loaderTimer = null;
+
+    function showLoader(moduleName) {
+      const loader = document.getElementById('page-loader');
+      const label = document.getElementById('loader-module-label');
+      const bar = document.getElementById('loader-bar');
+
+      // Reset bar animation
+      bar.style.animation = 'none';
+      bar.offsetWidth; // force reflow
+      bar.style.animation = '';
+
+      label.textContent = moduleMessages[moduleName] || 'Loading...';
+      loader.classList.remove('fade-out');
+      loader.classList.add('visible');
+    }
+
+    function hideLoader() {
+      const loader = document.getElementById('page-loader');
+      loader.classList.add('fade-out');
+      setTimeout(() => {
+        loader.classList.remove('visible');
+        loader.classList.remove('fade-out');
+      }, 550);
+    }
+
+    function setActiveView(viewName) {
+      showLoader(viewName);
+
+      if (loaderTimer) clearTimeout(loaderTimer);
+      loaderTimer = setTimeout(() => {
+        // Hide all sections
+        document.querySelectorAll('[data-view-section]').forEach(s => {
+          s.classList.remove('active', 'visible');
+        });
+
+        // Show target section
+        const target = document.querySelector(`[data-view-section="${viewName}"]`);
+        if (target) {
+          target.classList.add('active');
+          // Slight delay to let the element paint before fade-in
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              target.classList.add('visible');
+            });
+          });
+        }
+
+        // Update nav
+        document.querySelectorAll('.nav-item[data-view]').forEach(item => {
+          item.classList.toggle('active', item.dataset.view === viewName);
+        });
+
+        document.getElementById('currentViewLabel').textContent = viewLabels[viewName] || 'Command Center';
+
+        if (viewName === 'topology') {
+          setTimeout(() => network && network.fit({ animation: { duration: 250 } }), 100);
+        }
+
+        hideLoader();
+      }, 700); // Show loader for 700ms — feels snappy but intentional
+    }
+
+    document.querySelectorAll('.nav-item[data-view]').forEach(item => {
+      item.addEventListener('click', e => {
+        e.preventDefault();
+        setActiveView(item.dataset.view);
+      });
+    });
+
+    /* ──────────────────────────────────────────
+       CHARTS
+    ────────────────────────────────────────── */
+    Chart.defaults.color = "#4a5568";
+    Chart.defaults.borderColor = "rgba(255,255,255,0.05)";
+    Chart.defaults.font.family = "'Space Mono', monospace";
+    Chart.defaults.font.size = 10;
+
+    const CYAN = "#63b3ed", AMBER = "#f6ad55", RED = "#fc8181", GREEN = "#68d391", PURPLE = "#b794f4";
+
+    const packetChart = new Chart(document.getElementById("packetChart"), {
+      type: "bar",
+      data: {
+        labels: ["ICMP", "TCP", "UDP", "ARP", "Other"],
+        datasets: [{
+          label: "Packets",
+          data: [0, 0, 0, 0, 0],
+          backgroundColor: [CYAN, AMBER, PURPLE, GREEN, RED].map(c => c + "33"),
+          borderColor: [CYAN, AMBER, PURPLE, GREEN, RED],
+          borderWidth: 1,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: "rgba(255,255,255,0.03)" } },
+          y: { grid: { color: "rgba(255,255,255,0.03)" }, beginAtZero: true }
+        }
+      }
+    });
+
+    const morphChart = new Chart(document.getElementById("morphChart"), {
+      type: "doughnut",
+      data: {
+        labels: ["Time-Based", "Threat-Triggered", "Proactive", "Manual"],
+        datasets: [{
+          data: [0, 0, 0, 0],
+          backgroundColor: [CYAN + "55", RED + "55", AMBER + "55", PURPLE + "55"],
+          borderColor: [CYAN, RED, AMBER, PURPLE],
+          borderWidth: 1,
+          hoverOffset: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: "right", labels: { padding: 16, boxWidth: 10 } } },
+        cutout: "68%"
+      }
+    });
+
+    /* ──────────────────────────────────────────
+       TOPOLOGY
+    ────────────────────────────────────────── */
+    const topoData = { nodes: new vis.DataSet([]), edges: new vis.DataSet([]) };
+    const topoOptions = {
+      nodes: { font: { color: "#a0aec0", size: 11, face: "Space Mono" }, borderWidth: 1, borderWidthSelected: 2 },
+      edges: { color: { color: "#1e2535", highlight: "#63b3ed" }, smooth: { type: "cubicBezier" } },
+      physics: { enabled: true, barnesHut: { gravitationalConstant: -3000, springLength: 100 } },
+      interaction: { tooltipDelay: 200 },
+      background: "transparent"
+    };
+    const network = new vis.Network(document.getElementById("networkTopology"), topoData, topoOptions);
+
+    /* ──────────────────────────────────────────
+       LOG HELPERS
+    ────────────────────────────────────────── */
+    function addLogEntry(type, msg) {
+      const ul = document.getElementById("eventLog");
+      const empty = ul.querySelector("li.empty-state");
+      if (empty) empty.remove();
+      const now = new Date();
+      const ts = now.toTimeString().slice(0, 8);
+      const entry = document.createElement("li");
+      entry.className = "log-entry";
+      entry.innerHTML = `<span class="log-ts">${ts}</span><span class="log-tag ${type}">${type.toUpperCase()}</span><span class="log-msg">${msg}</span>`;
+      ul.prepend(entry);
+      while (ul.children.length > 40) ul.removeChild(ul.lastChild);
+    }
+
+    function addHistoryEntry(msg) {
+      const ul = document.getElementById("historyLog");
+      const empty = ul.querySelector("li.empty-state");
+      if (empty) empty.remove();
+      const now = new Date();
+      const ts = now.toTimeString().slice(0, 8);
+      const entry = document.createElement("li");
+      entry.className = "log-entry";
+      entry.innerHTML = `<span class="log-ts">${ts}</span><span class="log-tag morph">MORPH</span><span class="log-msg">${msg}</span>`;
+      ul.prepend(entry);
+      while (ul.children.length > 40) ul.removeChild(ul.lastChild);
+    }
+
+    function clearLog() {
+      document.getElementById("eventLog").innerHTML = '<li class="empty-state" style="padding:20px 0;">No events yet</li>';
+    }
+
+    /* ──────────────────────────────────────────
+       DATA RENDERERS
+    ────────────────────────────────────────── */
+    function renderMappings(payload) {
+      const tbody = document.getElementById("mappingsTableBody");
+      const badge = document.getElementById("vipCount");
+      const mappings = Array.isArray(payload) ? payload : (payload && payload.mappings ? payload.mappings : []);
+      if (!mappings.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No active mappings</td></tr>';
+        badge.textContent = "0 active";
+        return;
+      }
+      badge.textContent = mappings.length + " active";
+      tbody.innerHTML = mappings.map(m =>
+        `<tr><td>${m.real_ip}</td><td><span class="chip arrow">→</span></td><td>${m.vip}</td></tr>`
+      ).join("");
+    }
+
+    function renderTopology(topo) {
+      document.getElementById("topoStatus").textContent = "Live";
+      const nodes = [], edges = [];
+      (topo.switches || []).forEach(s => {
+        const id = s.id || s;
+        nodes.push({ id, label: id, shape: "box", color: { background: "#1e2535", border: CYAN, highlight: { background: "#252d3f", border: CYAN } }, font: { color: CYAN } });
+      });
+      (topo.hosts || []).forEach(h => {
+        const id = h.id || h.ip || h;
+        nodes.push({ id, label: h.ip || id, shape: "dot", size: 10, color: { background: GREEN, border: "#1e2535" } });
+      });
+      (topo.links || []).forEach(link => {
+        if (Array.isArray(link)) edges.push({ from: link[0], to: link[1] });
+        else edges.push({ from: link.from, to: link.to });
+      });
+      topoData.nodes.clear(); topoData.nodes.add(nodes);
+      topoData.edges.clear(); topoData.edges.add(edges);
+    }
+
+    function normalizePackets(stats) {
+      const p = stats.packets || stats.packets_by_protocol || {};
+      return [p.icmp || p.ICMP || 0, p.tcp || p.TCP || 0, p.udp || p.UDP || 0, p.arp || p.ARP || 0, p.other || p.OTHER || 0];
+    }
+
+    function normalizeMorphs(stats) {
+      const m = stats.morphs_by_trigger || {};
+      return [
+        m.time_based || m.time || 0,
+        m.threat_triggered || m.threat || 0,
+        (m.reply_triggered || m.reply || 0) + (m.packet_based || m.packet_count || 0),
+        m.manual || 0
+      ];
+    }
+
+    function renderStats(data) {
+      if (!data) return;
+      document.getElementById("uptime").textContent = data.uptime || "00:00:00";
+      document.getElementById("totalMorphs").textContent = data.total_morphs || 0;
+      document.getElementById("vipAllocations").textContent = data.vip_allocations || 0;
+      document.getElementById("threatsDetected").textContent = data.threats_detected || 0;
+      packetChart.data.datasets[0].data = normalizePackets(data);
+      packetChart.update("none");
+      morphChart.data.datasets[0].data = normalizeMorphs(data);
+      morphChart.update("none");
+      if (data.topology) renderTopology(data.topology);
+    }
+
+    /* ──────────────────────────────────────────
+       API ACTIONS
+    ────────────────────────────────────────── */
+    async function forceMorph() {
+      try {
+        const res = await fetch("/api/morph/force", { method: "POST" });
+        const data = await res.json();
+        addLogEntry("morph", data.message || ("Force morph triggered for " + (data.morphed_pairs || 0) + " pair(s)"));
+      } catch (e) {
+        addLogEntry("threat", "Force morph request failed");
+      }
+    }
+
+    function exportCSV() { window.location.href = "/api/export/csv"; }
+
+    function openStrategyModal() {
+      fetch("/api/strategy").then(r => r.json()).then(d => {
+        if (!d) return;
+        const strategy = d.packet_count_based ? "packet_based" : d.time_based ? "time_based" : d.threat_triggered && d.reply_triggered ? "hybrid" : "threat_triggered";
+        document.getElementById("strategySelect").value = strategy;
+        document.getElementById("morphInterval").value = d.time_interval || 30;
+        document.getElementById("packetThreshold").value = d.packet_threshold || 100;
+        document.getElementById("threatToggle").checked = !!d.threat_triggered;
+        document.getElementById("proactiveToggle").checked = !!(d.time_based || d.reply_triggered || d.packet_count_based);
+      }).catch(() => { });
+      document.getElementById("strategyModal").classList.add("open");
+    }
+
+    function closeStrategyModal() {
+      document.getElementById("strategyModal").classList.remove("open");
+    }
+
+    async function saveStrategy() {
+      const selected = document.getElementById("strategySelect").value;
+      const payload = {
+        reply_triggered: selected === "hybrid" || selected === "threat_triggered" || document.getElementById("proactiveToggle").checked,
+        time_based: selected === "time_based" || selected === "hybrid",
+        time_interval: parseInt(document.getElementById("morphInterval").value, 10) || 30,
+        packet_count_based: selected === "packet_based",
+        packet_threshold: parseInt(document.getElementById("packetThreshold").value, 10) || 100,
+        random_intervals: false,
+        min_interval: 10,
+        max_interval: 60,
+        threat_triggered: document.getElementById("threatToggle").checked
+      };
+      try {
+        await fetch("/api/strategy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        addLogEntry("info", "Strategy updated");
+      } catch (e) {
+        addLogEntry("threat", "Strategy update failed");
+      }
+      closeStrategyModal();
+    }
+
+    document.getElementById("strategyModal").addEventListener("click", e => {
+      if (e.target === e.currentTarget) closeStrategyModal();
+    });
+
+    /* ──────────────────────────────────────────
+       SOCKET + POLLING
+    ────────────────────────────────────────── */
+    let socket;
+    try {
+      socket = io();
+      socket.on("connect", () => addLogEntry("info", "Socket connected"));
+      socket.on("disconnect", () => addLogEntry("threat", "Socket disconnected"));
+      socket.on("stats_update", data => renderStats(data));
+      socket.on("mappings_update", data => renderMappings(data));
+      socket.on("topology_update", data => renderTopology(data));
+      socket.on("morph_event", e => {
+        const message = (e.ip1 || e.real_ip || "pair") + " morph event triggered";
+        addLogEntry("morph", message);
+        addHistoryEntry(message);
+      });
+      socket.on("threat_detected", e => addLogEntry("threat", (e.type || "Threat") + " detected from " + (e.source || "unknown")));
+    } catch (e) {
+      addLogEntry("info", "Running in polling mode");
+    }
+
+    async function poll() {
+      try {
+        const [stats, maps] = await Promise.all([
+          fetch("/api/stats").then(r => r.json()),
+          fetch("/api/mappings").then(r => r.json())
+        ]);
+        if (!stats.error) renderStats(stats);
+        if (!maps.error) renderMappings(maps);
+      } catch (e) { }
+    }
+
+    poll();
+    setInterval(poll, 5000);
+    setActiveView("command-center");
+  </script>
+</body>
+
+</html>
