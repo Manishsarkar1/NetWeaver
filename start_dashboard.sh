@@ -67,4 +67,8 @@ echo "================================================"
 echo ""
 
 # Start the controller
-ryu-manager controller_with_webdash.py
+if command_exists vanta-controller; then
+    vanta-controller
+else
+    ryu-manager ultimate_mtd_controller.py
+fi

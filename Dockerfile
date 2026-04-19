@@ -5,6 +5,8 @@ ENV PYTHONUNBUFFERED=1
 ENV VANTA_NETWORK_BACKEND=openflow_hardware
 ENV VANTA_NETWORK_TARGET=bare_metal_ovs
 ENV VANTA_HARDWARE_INVENTORY_PATH=/app/config/hardware_inventory.json
+ENV VANTA_STATE_BACKEND=sqlite
+ENV VANTA_STATE_DB_PATH=/app/data/vanta.db
 
 WORKDIR /app
 
@@ -16,6 +18,7 @@ COPY templates /app/templates
 COPY ultimate_mtd_controller.py /app/
 
 RUN pip install --no-cache-dir .
+RUN mkdir -p /app/data
 
 EXPOSE 5000 6653
 

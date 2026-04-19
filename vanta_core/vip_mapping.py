@@ -93,6 +93,15 @@ class InMemoryVIPMapper:
         with self._lock:
             return list(self._real_to_virtual.items())
 
+    def seed_mapping(self, real_ip, vip):
+        with self._lock:
+            if vip not in self._available_vips or real_ip in self._real_to_virtual:
+                return False
+            self._real_to_virtual[real_ip] = vip
+            self._virtual_to_real[vip] = real_ip
+            self._available_vips.remove(vip)
+            return True
+
     def _take_next_vip(self, excluded=None):
         candidates = self._available_vips.difference(excluded or set())
         if not candidates:

@@ -85,6 +85,7 @@ flowchart TB
 - The controller now has a pluggable network backend boundary. `ryu_openflow` is the active adapter today, while `openflow_hardware`, `netconf`, and `p4runtime` are scaffolded as planned backends for product-grade switch integration.
 - `openflow_hardware` is now a real adapter for OpenFlow-capable switches and bare-metal OVS endpoints. It keeps device inventory, requests port descriptions, exposes capability metadata, and uses the same flow-programming path against non-Mininet datapaths.
 - `openflow_hardware` now reads [config/hardware_inventory.json](/C:/Users/sarka/OneDrive/Desktop/minor/VANTA-Variable-Network-Topology-Architecture-/config/hardware_inventory.json) and enforces per-switch rollout policy before enabling non-bootstrap flow programming.
+- Runtime state now persists to SQLite by default, including morph history, threat events, audit logs, and current VIP mappings.
 
 ## Quick Start
 ```bash
@@ -166,6 +167,8 @@ export VANTA_NETWORK_BACKEND='ryu_openflow'
 export VANTA_NETWORK_TARGET='mininet'
 export VANTA_HARDWARE_INVENTORY_PATH='config/hardware_inventory.json'
 export VANTA_HARDWARE_ROLLOUT_MODE='enforce'
+export VANTA_STATE_BACKEND='sqlite'
+export VANTA_STATE_DB_PATH='data/vanta.db'
 
 # Real OpenFlow hardware path
 export VANTA_NETWORK_BACKEND='openflow_hardware'
@@ -181,6 +184,17 @@ export VANTA_NETWORK_TARGET='cisco_catalyst'
 - `mode=audit` logs policy violations but still allows flow installation for staged rollouts.
 - Per-device policy can require specific OpenFlow capabilities, a minimum discovered port count, and flow constraints such as max idle timeout or disallowing buffer IDs.
 
+### Operator Onboarding Flow
+- Discover connected hardware with `GET /api/network/devices`.
+- Approve a device without editing JSON manually by calling `POST /api/network/onboard/<dpid>`.
+- Move one switch from `audit` to `enforce` with `POST /api/network/rollout/<dpid>`.
+- Every onboarding or rollout change is written to the audit log and persisted in SQLite by default.
+
+### State Persistence
+- Default runtime persistence uses SQLite at `data/vanta.db`.
+- Persisted tables include morph events, threat events, audit logs, and the current VIP mapping set used for bootstrap restore.
+- Override the backend/path with `VANTA_STATE_BACKEND` and `VANTA_STATE_DB_PATH`.
+
 ## API Surface
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -189,7 +203,10 @@ export VANTA_NETWORK_TARGET='cisco_catalyst'
 | `/api/strategy` | `GET/POST` | Read or update active morphing strategy settings |
 | `/api/morph/force` | `POST` | Force immediate morphing of active IP pairs |
 | `/api/access/context` | `GET` | Current access-control context and last policy decision |
+| `/api/audit/logs` | `GET` | Recent audit log entries, including hardware onboarding and rollout changes |
 | `/api/network/devices` | `GET` | Current switch inventory, discovered OpenFlow capabilities, and known port metadata |
+| `/api/network/onboard/<dpid>` | `POST` | Approve a specific hardware switch and persist its expected capabilities and rollout mode |
+| `/api/network/rollout/<dpid>` | `POST` | Change one approved switch between `audit` and `enforce` rollout modes |
 | `/api/deployment/profile` | `GET` | Active deployment profile metadata |
 | `/api/health` | `GET` | Service health, deployment mode, telemetry level, and active network backend metadata |
 | `/api/export/csv` | `GET` | Export morph history as CSV |

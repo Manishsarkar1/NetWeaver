@@ -24,6 +24,8 @@ class RuntimeConfig:
     network_target: str = "mininet"
     hardware_inventory_path: str = _default_hardware_inventory_path()
     hardware_rollout_mode: str = "enforce"
+    state_backend: str = "sqlite"
+    state_db_path: str = "data/vanta.db"
     vip_mapping_backend: str = "memory"
     vip_persistence_ttl_seconds: int = 60
     redis_url: str = "redis://localhost:6379/0"
@@ -53,6 +55,8 @@ def load_runtime_config():
             "VANTA_HARDWARE_ROLLOUT_MODE",
             "enforce",
         ).lower(),
+        state_backend=os.getenv("VANTA_STATE_BACKEND", "sqlite").lower(),
+        state_db_path=os.getenv("VANTA_STATE_DB_PATH", "data/vanta.db"),
         vip_mapping_backend=os.getenv("VANTA_VIP_MAPPING_BACKEND", "memory").lower(),
         vip_persistence_ttl_seconds=int(
             os.getenv("VANTA_VIP_PERSISTENCE_TTL_SECONDS", "60")

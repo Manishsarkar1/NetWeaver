@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List
 
-from .hardware_policy import load_hardware_inventory_policy
+from .hardware_policy import HardwareInventoryManager
 
 
 @dataclass(frozen=True)
@@ -79,6 +79,12 @@ class BaseNetworkAdapter:
 
     def get_device_inventory(self):
         return []
+
+    def approve_device(self, dpid, target=None, rollout_mode="enforce", expected_capabilities=None, min_ports=1, flow_constraints=None, notes="Approved via onboarding flow."):
+        raise RuntimeError("Device onboarding is not supported by this network backend.")
+
+    def set_device_rollout_mode(self, dpid, rollout_mode):
+        raise RuntimeError("Per-device rollout mode is not supported by this network backend.")
 
     def install_controller_table_miss(self, datapath):
         raise NotImplementedError
@@ -174,7 +180,8 @@ class OpenFlowHardwareAdapter(RyuOpenFlowAdapter):
             status="active",
         )
         self._device_inventory: Dict[int, OpenFlowDeviceRecord] = {}
-        self._policy = load_hardware_inventory_policy(inventory_path, mode=rollout_mode)
+        self._policy_manager = HardwareInventoryManager(inventory_path, mode=rollout_mode)
+        self._policy = self._policy_manager.get_policy()
         self._inventory_path = inventory_path
 
     def register_switch(self, datapaths, datapath, features_msg=None):
@@ -209,6 +216,7 @@ class OpenFlowHardwareAdapter(RyuOpenFlowAdapter):
         ]
 
     def get_backend_metadata(self):
+        self._policy = self._policy_manager.get_policy()
         metadata = super().get_backend_metadata()
         metadata["inventory_path"] = self._inventory_path
         metadata["rollout_mode"] = self._policy.mode
@@ -265,11 +273,45 @@ class OpenFlowHardwareAdapter(RyuOpenFlowAdapter):
         raise RuntimeError(message)
 
     def _apply_policy(self, record):
+        self._policy = self._policy_manager.get_policy()
         decision = self._policy.evaluate_device(record)
         record.policy_status = "approved" if decision.approved else "blocked"
         record.policy_reasons = list(decision.reasons)
         record.expected_capabilities = list(decision.expected_capabilities)
         record.flow_constraints = decision.flow_constraints.to_dict()
+
+    def approve_device(self, dpid, target=None, rollout_mode="enforce", expected_capabilities=None, min_ports=1, flow_constraints=None, notes="Approved via onboarding flow."):
+        policy = self._policy_manager.approve_device(
+            dpid,
+            target=target or self.descriptor.target,
+            rollout_mode=rollout_mode,
+            expected_capabilities=expected_capabilities or [],
+            min_ports=min_ports,
+            flow_constraints=flow_constraints or {},
+            notes=notes,
+        )
+        self._policy = self._policy_manager.get_policy()
+        record = self._device_inventory.get(int(dpid))
+        if record is not None:
+            self._apply_policy(record)
+            return record.to_dict()
+        return {
+            "dpid": int(dpid),
+            "target": target or self.descriptor.target,
+            "policy": policy.to_dict(),
+        }
+
+    def set_device_rollout_mode(self, dpid, rollout_mode):
+        self._policy_manager.set_device_rollout_mode(dpid, rollout_mode)
+        self._policy = self._policy_manager.get_policy()
+        record = self._device_inventory.get(int(dpid))
+        if record is not None:
+            self._apply_policy(record)
+            return record.to_dict()
+        return {
+            "dpid": int(dpid),
+            "rollout_mode": rollout_mode,
+        }
 
     def _build_device_record(self, datapath, features_msg):
         ofproto = datapath.ofproto

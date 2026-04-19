@@ -8,6 +8,7 @@ from .hardware_policy import (
     FlowConstraintPolicy,
     HardwareDevicePolicy,
     HardwareInventoryPolicy,
+    HardwareInventoryManager,
     HardwarePolicyDecision,
     load_hardware_inventory_policy,
 )
@@ -21,6 +22,7 @@ from .network_adapters import (
     RyuOpenFlowAdapter,
     build_network_adapter,
 )
+from .state_store import NullStateStore, SQLiteStateStore, build_state_store
 from .vip_mapping import (
     InMemoryVIPMapper,
     RedisBackedVIPMapper,
@@ -34,6 +36,7 @@ __all__ = [
     "FlowConstraintPolicy",
     "HardwareDevicePolicy",
     "HardwareInventoryPolicy",
+    "HardwareInventoryManager",
     "HardwarePolicyDecision",
     "MorphEvent",
     "MorphingStrategy",
@@ -45,11 +48,14 @@ __all__ = [
     "PlannedHardwareAdapter",
     "RedisBackedVIPMapper",
     "RyuOpenFlowAdapter",
+    "NullStateStore",
     "RuntimeConfig",
+    "SQLiteStateStore",
     "ThreatDetector",
     "ThreatEvent",
     "ZeroTrustAccessPolicy",
     "build_network_adapter",
+    "build_state_store",
     "build_vip_mapper",
     "build_user_store",
     "load_hardware_inventory_policy",

@@ -3,7 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from vanta_core.hardware_policy import load_hardware_inventory_policy
+from vanta_core.hardware_policy import (
+    HardwareInventoryManager,
+    load_hardware_inventory_policy,
+)
 
 
 class FakeDevice:
@@ -33,6 +36,7 @@ class HardwarePolicyTests(unittest.TestCase):
             "devices": {
                 "7": {
                     "approved": True,
+                    "rollout_mode": "audit",
                     "expected_capabilities": ["flow_stats", "port_stats"],
                     "min_ports": 2,
                     "flow_constraints": {
@@ -56,8 +60,44 @@ class HardwarePolicyTests(unittest.TestCase):
 
         self.assertTrue(decision.approved)
         self.assertEqual(decision.reasons, ("approved",))
+        self.assertEqual(decision.mode, "audit")
         self.assertEqual(decision.flow_constraints.max_idle_timeout, 15)
         self.assertFalse(decision.flow_constraints.allow_buffer_id)
+
+    def test_onboarding_manager_promotes_device_without_manual_json_edit(self):
+        path = self._write_policy(
+            {
+                "mode": "audit",
+                "default_policy": {
+                    "approved": False,
+                    "expected_capabilities": [],
+                    "min_ports": 0,
+                },
+                "devices": {},
+            }
+        )
+        manager = HardwareInventoryManager(str(path), mode="audit")
+
+        manager.approve_device(
+            21,
+            target="site_a_edge",
+            rollout_mode="enforce",
+            expected_capabilities=["flow_stats"],
+            min_ports=1,
+            notes="Approved by onboarding API.",
+        )
+
+        policy = manager.get_policy()
+        decision = policy.evaluate_device(
+            FakeDevice(21, capabilities=["flow_stats"], ports=[{"port_no": 1}])
+        )
+
+        self.assertTrue(decision.approved)
+        self.assertEqual(decision.mode, "enforce")
+
+        persisted = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(persisted["devices"]["21"]["approved"])
+        self.assertEqual(persisted["devices"]["21"]["rollout_mode"], "enforce")
 
     @staticmethod
     def _write_policy(payload):

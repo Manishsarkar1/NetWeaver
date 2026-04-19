@@ -31,6 +31,10 @@ Environment overrides:
     VANTA_SESSION_LIFETIME_HOURS
     VANTA_NETWORK_BACKEND
     VANTA_NETWORK_TARGET
+    VANTA_HARDWARE_INVENTORY_PATH
+    VANTA_HARDWARE_ROLLOUT_MODE
+    VANTA_STATE_BACKEND
+    VANTA_STATE_DB_PATH
     VANTA_VIP_MAPPING_BACKEND
     VANTA_VIP_PERSISTENCE_TTL_SECONDS
     VANTA_REDIS_URL
@@ -68,6 +72,7 @@ from vanta_core import (
     ThreatDetector as CoreThreatDetector,
     ZeroTrustAccessPolicy,
     build_network_adapter,
+    build_state_store,
     build_vip_mapper,
     build_user_store,
     load_deployment_profile,
@@ -387,6 +392,7 @@ class UltimateMTDController(app_manager.RyuApp):
 
         self.network_adapter = build_network_adapter(runtime_config, logger=self.logger)
         self.vip_mapper = build_vip_mapper(runtime_config)
+        self.state_store = build_state_store(runtime_config)
 
         # Protocol flow trackers
         self.icmp_tracker = {}   # (src,dst) → {request_seen, time}
@@ -397,6 +403,8 @@ class UltimateMTDController(app_manager.RyuApp):
         self.stats           = MTDStatistics()
         self.strategy        = CoreMorphingStrategy()
         self.threat_detector = CoreThreatDetector(debug_sink=self.logger.info)
+        self.audit_log       = []
+        self._restore_persistent_state()
 
         self.logger.info("=" * 60)
         self.logger.info("  ULTIMATE MTD CONTROLLER  (FIXED VERSION)")
@@ -404,6 +412,7 @@ class UltimateMTDController(app_manager.RyuApp):
         self.logger.info("  Dashboard : http://localhost:5000")
         self.logger.info(f"  Deployment: {deployment_profile.mode}")
         self.logger.info(f"  Network   : {self.network_adapter.descriptor.name}")
+        self.logger.info(f"  State DB  : {self.state_store.backend_name}")
         self.logger.info(f"  VIP Store  : {self.vip_mapper.backend_name}")
         if self.vip_mapper.restored_count:
             self.logger.info(
@@ -445,6 +454,38 @@ class UltimateMTDController(app_manager.RyuApp):
     def _mapping_refresh_interval(self):
         ttl_seconds = self._mapping_ttl_seconds()
         return max(1, min(10, ttl_seconds // 2 or 1))
+
+    def _restore_persistent_state(self):
+        bootstrap = self.state_store.load_bootstrap_state()
+        self.stats.morph_history = list(bootstrap.get("morph_history", []))[-500:]
+        self.stats.total_morphs = len(self.stats.morph_history)
+        self.stats.threats_detected = len(bootstrap.get("threats", []))
+        self.stats.vip_allocations = len(bootstrap.get("vip_mappings", []))
+        self.audit_log = list(bootstrap.get("audit_logs", []))[-500:]
+
+        for event in self.stats.morph_history:
+            protocol = event.get("protocol", "")
+            trigger = event.get("trigger", "")
+            if protocol:
+                self.stats.morphs_by_protocol[protocol] += 1
+            if trigger:
+                self.stats.morphs_by_trigger[trigger] += 1
+
+        self.threat_detector.threats = list(bootstrap.get("threats", []))[-500:]
+        for mapping in bootstrap.get("vip_mappings", []):
+            self.vip_mapper.seed_mapping(mapping["real_ip"], mapping["vip"])
+
+    def _record_audit_event(self, action, details):
+        event = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "action": action,
+            "details": details,
+        }
+        self.audit_log.append(event)
+        if len(self.audit_log) > 500:
+            self.audit_log.pop(0)
+        self.state_store.record_audit_log(action, details)
+        return event
 
     # ── Background time-based morphing ────────────────────────────────────────
     def _time_based_morph_loop(self):
@@ -682,6 +723,13 @@ class UltimateMTDController(app_manager.RyuApp):
             # Check for port scan
             if self.threat_detector.detect_port_scan(src_ip, dst_ip, dst_port):
                 self.stats.threats_detected += 1
+                if self.threat_detector.threats:
+                    latest_threat = asdict(self.threat_detector.threats[-1])
+                    self.state_store.record_threat_event(latest_threat)
+                    self._record_audit_event(
+                        "threat_detected",
+                        latest_threat,
+                    )
                 socketio.emit('threat_detected', {
                     'type': 'port_scan',
                     'source': src_ip,
@@ -848,6 +896,11 @@ class UltimateMTDController(app_manager.RyuApp):
             return real_ip
         if created:
             self.stats.vip_allocations += 1
+            self.state_store.upsert_vip_mapping(real_ip, vip)
+            self._record_audit_event(
+                "vip_allocated",
+                {"real_ip": real_ip, "vip": vip},
+            )
             self.logger.info(f"  VIP allocated: {real_ip} â†’ {vip}")
             socketio.emit('vip_allocated', {'real_ip': real_ip, 'vip': vip})
             self._emit_dashboard_state()
@@ -894,6 +947,9 @@ class UltimateMTDController(app_manager.RyuApp):
             trigger=trigger,
         )
         event_dict = self.stats.record_morph(event)
+        self.state_store.record_morph_event(event_dict)
+        for real_ip, vip in new_vips.items():
+            self.state_store.upsert_vip_mapping(real_ip, vip)
 
         self.logger.info(
             f"[MORPH] âœ… {protocol} ({trigger}) | "
@@ -1376,6 +1432,10 @@ def health_check():
             controller_instance.vip_mapper.backend_name
             if controller_instance else runtime_config.vip_mapping_backend
         ),
+        'state_backend': (
+            controller_instance.state_store.backend_name
+            if controller_instance else runtime_config.state_backend
+        ),
     })
 
 
@@ -1388,6 +1448,81 @@ def network_devices():
     if not controller_instance:
         return jsonify({'devices': []})
     return jsonify({'devices': controller_instance.get_network_devices()})
+
+
+@flask_app.route('/api/network/onboard/<int:dpid>', methods=['POST'])
+@login_required
+def onboard_network_device(dpid):
+    decision = _enforce_access(f'/api/network/onboard/{dpid}')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
+    if not controller_instance:
+        return jsonify({'error': 'Controller not initialized'}), 503
+
+    payload = request.json or {}
+    rollout_mode = str(payload.get('rollout_mode', 'enforce')).lower()
+    flow_constraints = payload.get('flow_constraints', {})
+    target = payload.get('target', runtime_config.network_target)
+    notes = payload.get('notes', f'Approved by {current_user.username}')
+    current_device = next(
+        (device for device in controller_instance.get_network_devices() if device.get('dpid') == dpid),
+        None,
+    )
+    expected_capabilities = payload.get(
+        'expected_capabilities',
+        current_device.get('capabilities', []) if current_device else [],
+    )
+    min_ports = int(payload.get('min_ports', len(current_device.get('ports', [])) if current_device else 1))
+
+    try:
+        device = controller_instance.network_adapter.approve_device(
+            dpid,
+            target=target,
+            rollout_mode=rollout_mode,
+            expected_capabilities=expected_capabilities,
+            min_ports=min_ports,
+            flow_constraints=flow_constraints,
+            notes=notes,
+        )
+    except RuntimeError as exc:
+        return jsonify({'error': str(exc)}), 400
+    controller_instance._record_audit_event(
+        "hardware_onboarded",
+        {
+            "dpid": dpid,
+            "operator": current_user.username,
+            "rollout_mode": rollout_mode,
+            "expected_capabilities": expected_capabilities,
+            "min_ports": min_ports,
+        },
+    )
+    return jsonify({'success': True, 'device': device})
+
+
+@flask_app.route('/api/network/rollout/<int:dpid>', methods=['POST'])
+@login_required
+def update_network_rollout(dpid):
+    decision = _enforce_access(f'/api/network/rollout/{dpid}')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
+    if not controller_instance:
+        return jsonify({'error': 'Controller not initialized'}), 503
+
+    payload = request.json or {}
+    rollout_mode = str(payload.get('rollout_mode', 'enforce')).lower()
+    try:
+        device = controller_instance.network_adapter.set_device_rollout_mode(dpid, rollout_mode)
+    except RuntimeError as exc:
+        return jsonify({'error': str(exc)}), 400
+    controller_instance._record_audit_event(
+        "hardware_rollout_mode_updated",
+        {
+            "dpid": dpid,
+            "operator": current_user.username,
+            "rollout_mode": rollout_mode,
+        },
+    )
+    return jsonify({'success': True, 'device': device})
 
 
 @flask_app.route('/api/deployment/profile')
@@ -1424,6 +1559,17 @@ def access_context():
             'reasons': decision.reasons,
         },
     })
+
+
+@flask_app.route('/api/audit/logs')
+@login_required
+def audit_logs():
+    decision = _enforce_access('/api/audit/logs')
+    if not decision.allowed:
+        return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
+    if not controller_instance:
+        return jsonify({'audit_logs': []})
+    return jsonify({'audit_logs': controller_instance.audit_log[-100:]})
 
 
 @flask_app.route('/api/stats')
