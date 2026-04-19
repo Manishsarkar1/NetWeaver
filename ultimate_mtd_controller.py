@@ -29,6 +29,12 @@ Environment overrides:
     VANTA_ADMIN_USERNAME
     VANTA_ADMIN_PASSWORD
     VANTA_SESSION_LIFETIME_HOURS
+    VANTA_NETWORK_BACKEND
+    VANTA_NETWORK_TARGET
+    VANTA_VIP_MAPPING_BACKEND
+    VANTA_VIP_PERSISTENCE_TTL_SECONDS
+    VANTA_REDIS_URL
+    VANTA_REDIS_KEY_PREFIX
 """
 
 from ryu.base import app_manager
@@ -60,6 +66,8 @@ from vanta_core import (
     MorphingStrategy as CoreMorphingStrategy,
     ThreatDetector as CoreThreatDetector,
     ZeroTrustAccessPolicy,
+    build_network_adapter,
+    build_vip_mapper,
     build_user_store,
     load_deployment_profile,
     load_runtime_config,
@@ -373,6 +381,9 @@ class UltimateMTDController(app_manager.RyuApp):
         self.virtual_to_real = {}   # vip     → real_ip
         self.virtual_pool    = self._init_virtual_pool()
 
+        self.network_adapter = build_network_adapter(runtime_config, logger=self.logger)
+        self.vip_mapper = build_vip_mapper(runtime_config)
+
         # Protocol flow trackers
         self.icmp_tracker = {}   # (src,dst) → {request_seen, time}
         self.tcp_tracker  = {}   # (src,dst,sp,dp) → {syn_seen, syn_ack_seen, established, time}
@@ -388,6 +399,12 @@ class UltimateMTDController(app_manager.RyuApp):
         self.logger.info("=" * 60)
         self.logger.info("  Dashboard : http://localhost:5000")
         self.logger.info(f"  Deployment: {deployment_profile.mode}")
+        self.logger.info(f"  Network   : {self.network_adapter.descriptor.name}")
+        self.logger.info(f"  VIP Store  : {self.vip_mapper.backend_name}")
+        if self.vip_mapper.restored_count:
+            self.logger.info(
+                f"  Restored   : {self.vip_mapper.restored_count} persisted VIP mappings"
+            )
         self.logger.info(
             f"  Login     : {runtime_config.admin_username} / "
             "[set via VANTA_ADMIN_PASSWORD]"
@@ -402,6 +419,8 @@ class UltimateMTDController(app_manager.RyuApp):
         # Time-based morphing background task
         self._time_morph_task = hub.spawn(self._time_based_morph_loop)
         self._dashboard_sync_task = hub.spawn(self._dashboard_sync_loop)
+        if self.vip_mapper.persistence_enabled:
+            self._mapping_refresh_task = hub.spawn(self._mapping_refresh_loop)
 
     # ── Flask ─────────────────────────────────────────────────────────────────
     def _start_flask(self):
@@ -412,18 +431,37 @@ class UltimateMTDController(app_manager.RyuApp):
     def _init_virtual_pool(self):
         return set(f"192.168.100.{i}" for i in range(1, 255))
 
+    def _mapping_ttl_seconds(self):
+        if self.strategy.time_based:
+            if self.strategy.random_intervals:
+                return max(1, int(self.strategy.max_interval))
+            return max(1, int(self.strategy.time_interval))
+        return max(1, int(runtime_config.vip_persistence_ttl_seconds))
+
+    def _mapping_refresh_interval(self):
+        ttl_seconds = self._mapping_ttl_seconds()
+        return max(1, min(10, ttl_seconds // 2 or 1))
+
     # ── Background time-based morphing ────────────────────────────────────────
     def _time_based_morph_loop(self):
         while True:
             hub.sleep(5)
             if not self.strategy.time_based:
                 continue
-            ips = list(self.real_to_virtual.keys())
+            ips = self.vip_mapper.list_real_ips()
             for i in range(0, len(ips) - 1, 2):
                 ip1, ip2 = ips[i], ips[i + 1]
                 if self.strategy.should_morph_time_based(ip1, ip2):
                     self.logger.info(f"⏰ Time-based morph: {ip1} ↔ {ip2}")
                     self.morph_ip_pair(ip1, ip2, "TIME", trigger='time')
+
+    def _mapping_refresh_loop(self):
+        while True:
+            hub.sleep(self._mapping_refresh_interval())
+            try:
+                self.vip_mapper.refresh_all(self._mapping_ttl_seconds())
+            except Exception as exc:
+                self.logger.debug(f"VIP lease refresh skipped: {exc}")
 
     def _emit_dashboard_state(self):
         socketio.emit('stats_update', self.stats.get_stats_dict())
@@ -525,8 +563,7 @@ class UltimateMTDController(app_manager.RyuApp):
         socketio.emit('mappings_update', {'mappings': mappings})
 
     def _update_topology(self):
-        switches = [{'dpid': dpid, 'id': f's{dpid}'}
-                    for dpid in self.datapaths]
+        switches = self.network_adapter.list_switches(self.datapaths)
         hosts = []
         links = []
         for ip, vip in self.real_to_virtual.items():
@@ -558,26 +595,25 @@ class UltimateMTDController(app_manager.RyuApp):
 
     def add_flow(self, datapath, priority, match, actions,
                  idle=0, hard=0, buffer_id=None):
-        ofproto = datapath.ofproto
-        parser  = datapath.ofproto_parser
-        inst    = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                                actions)]
-        kwargs = dict(datapath=datapath, priority=priority,
-                      match=match, instructions=inst,
-                      idle_timeout=idle, hard_timeout=hard)
-        if buffer_id:
-            kwargs['buffer_id'] = buffer_id
-        datapath.send_msg(parser.OFPFlowMod(**kwargs))
+        self.network_adapter.install_flow(
+            datapath,
+            priority,
+            match,
+            actions,
+            idle=idle,
+            hard=hard,
+            buffer_id=buffer_id,
+        )
 
     def install_flow_for_packet(self, datapath, in_port, out_port,
                                 pkt, buffer_id=None):
-        parser = datapath.ofproto_parser
-        eth    = pkt.get_protocol(ethernet.ethernet)
-        match  = parser.OFPMatch(in_port=in_port,
-                                 eth_dst=eth.dst, eth_src=eth.src)
-        actions = [parser.OFPActionOutput(out_port)]
-        self.add_flow(datapath, 1, match, actions, idle=30,
-                      buffer_id=buffer_id)
+        self.network_adapter.install_packet_flow(
+            datapath,
+            in_port,
+            out_port,
+            pkt,
+            buffer_id=buffer_id,
+        )
 
     # ── Protocol handlers ─────────────────────────────────────────────────────
 
@@ -791,17 +827,106 @@ class UltimateMTDController(app_manager.RyuApp):
         self._forward(datapath, msg, in_port, out_port, ofproto, parser)
 
     def _forward(self, datapath, msg, in_port, out_port, ofproto, parser):
-        actions = [parser.OFPActionOutput(out_port)]
-        data    = (msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER
-                   else None)
-        out = parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=msg.buffer_id,
-            in_port=in_port,
-            actions=actions,
-            data=data,
+        self.network_adapter.forward_packet(datapath, msg, in_port, out_port)
+
+    def get_current_mappings(self):
+        return [
+            {'real_ip': real_ip, 'vip': vip}
+            for real_ip, vip in self.vip_mapper.list_mappings()
+        ]
+
+    def allocate_vip(self, real_ip):
+        """Assign a VIP to real_ip if not already done. Returns the VIP."""
+        vip, created = self.vip_mapper.ensure_vip(
+            real_ip,
+            ttl_seconds=self._mapping_ttl_seconds(),
         )
-        datapath.send_msg(out)
+        if vip is None:
+            self.logger.warning("VIP pool exhausted!")
+            return real_ip
+        if created:
+            self.stats.vip_allocations += 1
+            self.logger.info(f"  VIP allocated: {real_ip} â†’ {vip}")
+            socketio.emit('vip_allocated', {'real_ip': real_ip, 'vip': vip})
+            self._emit_dashboard_state()
+        return vip
+
+    def morph_ip_pair(self, ip1, ip2, protocol="", trigger='reply'):
+        missing = [ip for ip in (ip1, ip2) if not self.vip_mapper.has_mapping(ip)]
+        if missing:
+            self.logger.warning(
+                f"[MORPH] Skipped â€” IPs not yet in VIP map: {missing}. "
+                f"Trigger={trigger}, protocol={protocol}"
+            )
+            for ip in missing:
+                self.allocate_vip(ip)
+            return
+
+        old_vips = {}
+        new_vips = {}
+        ttl_seconds = self._mapping_ttl_seconds()
+
+        for real_ip in (ip1, ip2):
+            old_vip, new_vip = self.vip_mapper.rotate_vip(
+                real_ip,
+                ttl_seconds=ttl_seconds,
+            )
+            if old_vip is None or new_vip is None:
+                self.logger.warning("VIP pool exhausted during morph!")
+                continue
+            old_vips[real_ip] = old_vip
+            new_vips[real_ip] = new_vip
+
+        if not new_vips:
+            return
+
+        event = CoreMorphEvent(
+            timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            protocol=protocol,
+            ip1=ip1,
+            ip2=ip2,
+            old_vip1=old_vips.get(ip1, ''),
+            new_vip1=new_vips.get(ip1, ''),
+            old_vip2=old_vips.get(ip2, ''),
+            new_vip2=new_vips.get(ip2, ''),
+            trigger=trigger,
+        )
+        event_dict = self.stats.record_morph(event)
+
+        self.logger.info(
+            f"[MORPH] âœ… {protocol} ({trigger}) | "
+            f"{ip1}: {old_vips.get(ip1)} â†’ {new_vips.get(ip1)} | "
+            f"{ip2}: {old_vips.get(ip2)} â†’ {new_vips.get(ip2)}"
+        )
+
+        socketio.emit('morph_event', event_dict)
+        self._emit_dashboard_state()
+
+    def _emit_current_mappings(self):
+        socketio.emit('mappings_update', {'mappings': self.get_current_mappings()})
+
+    def _update_topology(self):
+        switches = self.network_adapter.list_switches(self.datapaths)
+        hosts = []
+        links = []
+        for ip, vip in self.vip_mapper.list_mappings():
+            info = self.hosts.get(ip, {})
+            hosts.append(
+                {
+                    'ip': ip,
+                    'vip': vip,
+                    'mac': info.get('mac', 'unknown'),
+                    'id': ip,
+                }
+            )
+            if 'switch' in info:
+                links.append({'from': f"s{info['switch']}", 'to': ip})
+        self.stats.update_topology(switches, hosts, links)
+        socketio.emit('topology_update', self.stats.topology)
+
+    def _ensure_vips(self, *ips):
+        for ip in ips:
+            self.allocate_vip(ip)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1219,6 +1344,22 @@ def health_check():
         'controller_ready': controller_instance is not None,
         'deployment_mode': deployment_profile.mode,
         'telemetry_level': deployment_profile.telemetry_level,
+        'network_backend': (
+            controller_instance.network_adapter.descriptor.to_dict()
+            if controller_instance else {
+                'name': runtime_config.network_backend,
+                'transport': runtime_config.network_backend,
+                'target': runtime_config.network_target,
+                'supports_physical_switches': False,
+                'supports_flow_programming': False,
+                'supports_packet_io': False,
+                'status': 'configured',
+            }
+        ),
+        'vip_mapping_backend': (
+            controller_instance.vip_mapper.backend_name
+            if controller_instance else runtime_config.vip_mapping_backend
+        ),
     })
 
 
@@ -1276,10 +1417,7 @@ def get_mappings():
     if not decision.allowed:
         return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if controller_instance:
-        return jsonify({'mappings': [
-            {'real_ip': r, 'vip': v}
-            for r, v in controller_instance.real_to_virtual.items()
-        ]})
+        return jsonify({'mappings': controller_instance.get_current_mappings()})
     return jsonify({'mappings': []})
 
 
@@ -1325,7 +1463,7 @@ def force_morph():
         return jsonify({'error': 'Access denied', 'decision': session['last_access_decision']}), 403
     if not controller_instance:
         return jsonify({'error': 'Controller not initialized'})
-    ips = list(controller_instance.real_to_virtual.keys())
+    ips = controller_instance.vip_mapper.list_real_ips()
     morphed = 0
     for i in range(0, len(ips) - 1, 2):
         controller_instance.morph_ip_pair(ips[i], ips[i + 1],
@@ -1458,10 +1596,7 @@ def handle_connect():
     print(f'[WS] {current_user.username} connected')
     if controller_instance:
         emit('stats_update',    controller_instance.stats.get_stats_dict())
-        emit('mappings_update', {'mappings': [
-            {'real_ip': r, 'vip': v}
-            for r, v in controller_instance.real_to_virtual.items()
-        ]})
+        emit('mappings_update', {'mappings': controller_instance.get_current_mappings()})
 
 
 @socketio.on('disconnect')

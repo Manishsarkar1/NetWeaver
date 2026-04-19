@@ -68,6 +68,7 @@ flowchart TB
 
 ## Core Capabilities
 - OpenFlow 1.3 controller built on Ryu for SDN experimentation.
+- Network adapter seam for future hardware backends, so morphing logic can be carried forward beyond Mininet-centric labs.
 - Dynamic VIP allocation and IP-pair morphing to invalidate stale scan results.
 - Multiple morphing modes: reply-triggered, time-based, packet-count-based, randomized intervals, threat-triggered, and operator-forced morphing.
 - Port-scan detection with configurable threshold/window logic.
@@ -76,6 +77,12 @@ flowchart TB
 - Deployment profiles for `lab`, `hybrid`, and `enterprise` modes.
 - Export support for CSV, JSON, and PDF reports.
 - Attack simulation and performance benchmarking utilities for experiments.
+
+## Scalability And Production Readiness
+- Ryu remains a single-node research controller, so true horizontal scale still requires porting the morphing engine to a clustered SDN control plane such as ONOS or OpenDaylight.
+- This repo now includes a Redis-backed VIP mapper for crash resilience. The controller still runs as one Ryu instance, but active VIP assignments can survive a controller restart as long as the Redis lease has not expired.
+- VIP persistence TTL is aligned to the active morph interval when time-based morphing is enabled, and falls back to `VANTA_VIP_PERSISTENCE_TTL_SECONDS` for reply-triggered or threat-triggered deployments.
+- The controller now has a pluggable network backend boundary. `ryu_openflow` is the active adapter today, while `openflow_hardware`, `netconf`, and `p4runtime` are scaffolded as planned backends for product-grade switch integration.
 
 ## Quick Start
 ```bash
@@ -90,6 +97,9 @@ export VANTA_ADMIN_USERNAME='admin'
 export VANTA_ADMIN_PASSWORD='replace-this-password'
 export VANTA_MFA_CODE='246810'
 export VANTA_DEPLOYMENT_MODE='hybrid'
+export VANTA_NETWORK_BACKEND='ryu_openflow'
+export VANTA_NETWORK_TARGET='mininet'
+export VANTA_VIP_MAPPING_BACKEND='memory'
 
 # Windows PowerShell:
 $env:VANTA_SECRET_KEY='replace-this-secret'
@@ -97,6 +107,9 @@ $env:VANTA_ADMIN_USERNAME='admin'
 $env:VANTA_ADMIN_PASSWORD='replace-this-password'
 $env:VANTA_MFA_CODE='246810'
 $env:VANTA_DEPLOYMENT_MODE='hybrid'
+$env:VANTA_NETWORK_BACKEND='ryu_openflow'
+$env:VANTA_NETWORK_TARGET='mininet'
+$env:VANTA_VIP_MAPPING_BACKEND='memory'
 
 # 2) Start the VANTA controller and dashboard backend
 ryu-manager ultimate_mtd_controller.py
@@ -110,6 +123,33 @@ sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 # demo MFA code: 246810
 ```
 
+### Redis-backed VIP Persistence
+```bash
+# Start Redis if you want crash-resilient VIP mappings
+docker run --name vanta-redis -p 6379:6379 redis:7
+
+# Linux/macOS:
+export VANTA_VIP_MAPPING_BACKEND='redis'
+export VANTA_REDIS_URL='redis://localhost:6379/0'
+export VANTA_VIP_PERSISTENCE_TTL_SECONDS='60'
+
+# Windows PowerShell:
+$env:VANTA_VIP_MAPPING_BACKEND='redis'
+$env:VANTA_REDIS_URL='redis://localhost:6379/0'
+$env:VANTA_VIP_PERSISTENCE_TTL_SECONDS='60'
+```
+
+### Network Backend Abstraction
+```bash
+# Current lab default
+export VANTA_NETWORK_BACKEND='ryu_openflow'
+export VANTA_NETWORK_TARGET='mininet'
+
+# Productization scaffolds for future hardware support
+export VANTA_NETWORK_BACKEND='openflow_hardware'
+export VANTA_NETWORK_TARGET='cisco_catalyst'
+```
+
 ## API Surface
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -119,7 +159,7 @@ sudo mn --controller=remote,port=6653 --topo=single,3 --mac
 | `/api/morph/force` | `POST` | Force immediate morphing of active IP pairs |
 | `/api/access/context` | `GET` | Current access-control context and last policy decision |
 | `/api/deployment/profile` | `GET` | Active deployment profile metadata |
-| `/api/health` | `GET` | Service health, deployment mode, and telemetry level |
+| `/api/health` | `GET` | Service health, deployment mode, telemetry level, and active network backend metadata |
 | `/api/export/csv` | `GET` | Export morph history as CSV |
 | `/api/export/json` | `GET` | Export controller statistics as JSON |
 | `/api/export/pdf` | `GET` | Export a PDF summary report |
