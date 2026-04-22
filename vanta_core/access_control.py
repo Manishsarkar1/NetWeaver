@@ -34,7 +34,7 @@ class AccessDecision:
 
 
 class ZeroTrustAccessPolicy:
-    """Simple policy engine for demo-friendly identity/device-aware access control."""
+    """Research-friendly policy model for control-plane access experiments."""
 
     def __init__(self, require_mfa_for_admin=True):
         self.require_mfa_for_admin = require_mfa_for_admin
@@ -55,7 +55,7 @@ class ZeroTrustAccessPolicy:
             for token in ("/api/strategy", "/api/morph", "/api/export", "/api/access")
         )
 
-        if context.remote_access and context.deployment_mode in {"hybrid", "enterprise"}:
+        if context.remote_access and context.deployment_mode in {"adaptive", "stress", "hybrid", "enterprise"}:
             risk_score += 10
             reasons.append("Remote access path detected")
 

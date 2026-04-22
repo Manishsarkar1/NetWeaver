@@ -1,83 +1,88 @@
 # VANTA Project Overview
 
 ## Title
-VANTA: Variable Network Topology Architecture - An adaptive SDN-based Moving Target Defense (MTD) system with virtual IP morphing and threat-triggered response.
+VANTA: Variable Network Topology Architecture for research on SDN-based moving target defense.
 
-## Problem Statement
-Static network addressing gives attackers a stable target map. Once reconnaissance completes, exploitation becomes easier because host-to-IP relationships remain valid for too long.
+## Problem Framing
+Static addressing gives an attacker a stable network map. In a research setting, that makes it difficult to measure how quickly a defender can invalidate reconnaissance without imposing excessive control-plane cost.
+
+## Research Position
+This repository should be treated as an experimental platform. Its purpose is to help researchers, students, and evaluators reproduce controlled lab studies on virtual IP morphing rather than to offer a production-ready network defense stack.
 
 ## Core Idea
-VANTA continuously virtualizes and remorphs attacker-facing IP identities so reconnaissance data expires quickly.
+VANTA continuously remaps attacker-visible identities so that observations collected at time `t0` become unreliable at `t1`.
 
 Example:
-- At `t0`: scanner sees `192.168.13.2` and `192.168.13.66`
-- At `t0 + ~1s` after scan inactivity: same hosts become `192.168.13.56` and `192.168.13.45`
+- At `t0`, a scanner sees `192.168.13.2` and `192.168.13.66`.
+- At `t1`, after morphing is triggered, the same hosts may appear as `192.168.13.56` and `192.168.13.45`.
 
 ## Objectives
-1. Implement SDN-driven VIP mapping and fast IP morphing.
-2. Detect scan-like behavior and trigger defensive remorphing.
-3. Provide real-time visibility through a dashboard.
-4. Measure security gain vs performance overhead.
+1. Build an SDN controller that supports controlled VIP morphing experiments.
+2. Detect scan-like behavior and study trigger-driven remapping.
+3. Observe system behavior through logs, APIs, and dashboard telemetry.
+4. Quantify security benefit versus experimental overhead.
 
-## System Components
+## Main Components
 - `ultimate_mtd_controller.py`
-  - Ryu control plane
-  - VIP allocator and morph logic
-  - Threat detector
-  - Flask + Socket.IO dashboard and APIs
+  Research controller combining Ryu, VIP mapping, morph scheduling, threat detection, and observation endpoints.
 - `attack_simulator.py`
-  - Attack traffic generation (scan/flood/recon scenarios)
+  Traffic generator for reconnaissance and disruption scenarios.
 - `benchmark_suite.py`
-  - Latency, throughput, CPU/memory, strategy comparisons
+  Measurement harness for latency, throughput, resource use, and strategy comparison.
+- `vanta_core/`
+  Reusable experiment logic including policy, config, deployment profile mapping, and defense primitives.
+- `tests/`
+  Unit tests for core research logic.
 
 ## Architecture
 ```mermaid
 flowchart LR
-    A["Attacker / External Source"] --> B["OpenFlow Switch"]
-    B --> C["VANTA Controller"]
+    A["Attacker Model"] --> B["OpenFlow Switch"]
+    B --> C["VANTA Research Controller"]
     C --> D["VIP Mapping Engine"]
     C --> E["Threat Detector"]
-    C --> F["Dashboard + API"]
-    D --> G["Internal Hosts"]
+    C --> F["Observation Layer"]
+    D --> G["Lab Hosts"]
     E --> C
 ```
 
 ## Threat Model
-VANTA currently targets:
-- Port scanning / reconnaissance behavior.
-- Rapid probing patterns that build host-service intelligence.
+VANTA focuses on early-stage adversarial behavior:
+- Port scans and host/service discovery.
+- Rapid probing patterns that build targeting intelligence.
 
-## Morphing Strategies
-- Reply-triggered: morph after completed communication patterns.
-- Time-based: periodic remorphing.
-- Packet-count-based: remorph after traffic thresholds.
-- Threat-triggered: immediate remorphing on suspicious probes.
-- Manual: operator-triggered morph.
+## Experimental Factors
+- Morphing strategy
+- Morph interval
+- Packet threshold
+- Threat trigger sensitivity
+- Topology size
+- Attack intensity
 
-## Evaluation Plan
-Security metrics:
-- Scan completion quality degradation.
-- Attack success-rate reduction.
-- Detection-to-morph delay.
+## Candidate Dependent Variables
+- Detection-to-morph delay
+- Reconnaissance accuracy after remapping
+- Flow churn
+- Controller CPU and memory usage
+- Latency and throughput overhead
 
-Performance metrics:
-- RTT and throughput overhead.
-- Controller CPU and memory usage.
-- Flow churn / control-plane load.
+## Experiment Profiles
+- `baseline`
+  Controlled reproduction mode for simple lab runs.
+- `adaptive`
+  Comparative mode for experiments that include richer trust and access signals.
+- `stress`
+  High-pressure mode for aggressive remapping and heavier observation overhead.
 
-## Research Questions
-1. How much does VIP morphing reduce usable reconnaissance output?
-2. Which strategy offers the best security/performance trade-off?
-3. What morph interval keeps attacker knowledge stale with acceptable overhead?
+Legacy profile names are still accepted for compatibility with older scripts.
 
 ## Deliverables
-- Working SDN MTD controller.
-- Attack simulation suite.
-- Benchmarking suite.
-- Dashboard and export endpoints.
-- Reproducible experiment data.
+- A working research controller
+- Attack and benchmark scripts
+- Reproducible lab instructions
+- Measurable telemetry for comparative analysis
 
 ## Practical Notes
-- Primary runtime target is Linux + Mininet + OVS.
-- Keep controller execution via `ryu-manager ultimate_mtd_controller.py`.
-- Use `quick_start.md` for run commands and troubleshooting.
+- The primary runtime target is Linux with Mininet and Open vSwitch.
+- Use `ryu-manager ultimate_mtd_controller.py` to run the controller.
+- Use `quick_start.md` as the experiment reproduction guide.

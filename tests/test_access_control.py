@@ -15,7 +15,7 @@ class AccessControlTests(unittest.TestCase):
             requested_resource="/api/morph/force",
             device_trust="verified",
             mfa_verified=False,
-            deployment_mode="hybrid",
+            deployment_mode="adaptive",
             remote_access=True,
         )
 
@@ -35,7 +35,7 @@ class AccessControlTests(unittest.TestCase):
             requested_resource="/api/stats",
             device_trust="managed",
             mfa_verified=False,
-            deployment_mode="hybrid",
+            deployment_mode="adaptive",
             remote_access=False,
         )
 
@@ -46,11 +46,16 @@ class AccessControlTests(unittest.TestCase):
 
 
 class DeploymentProfileTests(unittest.TestCase):
-    def test_hybrid_profile_enables_remote_agent_support(self):
-        profile = load_deployment_profile("hybrid")
+    def test_adaptive_profile_enables_remote_agent_support(self):
+        profile = load_deployment_profile("adaptive")
 
         self.assertTrue(profile.supports_remote_agents)
         self.assertTrue(profile.requires_device_trust)
+
+    def test_legacy_profile_names_remain_compatible(self):
+        profile = load_deployment_profile("hybrid")
+
+        self.assertEqual(profile.mode, "adaptive")
 
 
 if __name__ == "__main__":
