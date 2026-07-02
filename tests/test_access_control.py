@@ -44,6 +44,27 @@ class AccessControlTests(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.segmentation_profile, "user-zone")
 
+    def test_untrusted_remote_admin_is_quarantined_without_mfa(self):
+        policy = ZeroTrustAccessPolicy(require_mfa_for_admin=True)
+        context = AccessContext(
+            username="admin",
+            role="admin",
+            source_ip="198.51.100.10",
+            user_agent="Mozilla/5.0",
+            requested_resource="/api/access/context",
+            device_trust="untrusted",
+            mfa_verified=False,
+            deployment_mode="stress",
+            remote_access=True,
+        )
+
+        decision = policy.evaluate(context)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("mfa", decision.required_controls)
+        self.assertIn("verified_device", decision.required_controls)
+        self.assertEqual(decision.segmentation_profile, "quarantine-zone")
+
 
 class DeploymentProfileTests(unittest.TestCase):
     def test_adaptive_profile_enables_remote_agent_support(self):

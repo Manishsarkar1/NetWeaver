@@ -69,6 +69,26 @@ class MTDBenchmark:
         
         self._log(f"Results saved to {filename}", "green")
         return filename
+
+    def _summarize_series(self, values):
+        """Return a compact summary for a numeric series."""
+        if not values:
+            return None
+
+        return {
+            'count': len(values),
+            'min': min(values),
+            'max': max(values),
+            'avg': statistics.mean(values),
+            'median': statistics.median(values),
+            'stddev': statistics.stdev(values) if len(values) > 1 else 0,
+        }
+
+    def _percent_change(self, baseline, candidate):
+        """Compute percent change while avoiding divide-by-zero."""
+        if baseline == 0:
+            return None
+        return ((candidate - baseline) / baseline) * 100
     
     def _ping_test(self, target='10.0.0.2', count=100):
         """
@@ -172,17 +192,29 @@ class MTDBenchmark:
         if len(test_results['scenarios']) == 2:
             baseline_avg = test_results['scenarios'][0]['statistics']['avg']
             mtd_avg = test_results['scenarios'][1]['statistics']['avg']
-            overhead = ((mtd_avg - baseline_avg) / baseline_avg) * 100
+            overhead = self._percent_change(baseline_avg, mtd_avg)
             
             test_results['overhead_percentage'] = overhead
             
-            console.print(f"\n[bold]Latency Overhead: {overhead:.2f}%[/bold]")
+            if overhead is not None:
+                console.print(f"\n[bold]Latency Overhead: {overhead:.2f}%[/bold]")
+            else:
+                console.print("\n[bold]Latency Overhead: unavailable (baseline average is zero)[/bold]")
         
         self.results['tests'].append(test_results)
         
         # Generate plot if available
         if PLOTTING_AVAILABLE and len(test_results['scenarios']) == 2:
             self._plot_latency_comparison(test_results)
+
+        if test_results['scenarios']:
+            test_results['summary'] = {
+                'scenario_count': len(test_results['scenarios']),
+                'statistics': {
+                    scenario['key']: scenario['statistics']
+                    for scenario in test_results['scenarios']
+                }
+            }
     
     def throughput_benchmark(self, duration=10):
         """
@@ -330,18 +362,8 @@ class MTDBenchmark:
             
             test_results['samples'] = samples
             test_results['statistics'] = {
-                'cpu': {
-                    'min': min(cpu_values),
-                    'max': max(cpu_values),
-                    'avg': statistics.mean(cpu_values),
-                    'median': statistics.median(cpu_values)
-                },
-                'memory': {
-                    'min': min(memory_values),
-                    'max': max(memory_values),
-                    'avg': statistics.mean(memory_values),
-                    'median': statistics.median(memory_values)
-                }
+                'cpu': self._summarize_series(cpu_values),
+                'memory': self._summarize_series(memory_values)
             }
             
             # Display results
@@ -417,10 +439,18 @@ class MTDBenchmark:
                 'attacks_detected': 0,
                 'morphs_triggered': 0,
                 'false_positives': 0,
-                'latency_overhead': 0.0
+                'latency_overhead': 0.0,
+                'notes': 'Placeholder until controller API-driven evaluation is wired in'
             }
             
             test_results['strategies'].append(strategy_result)
+
+        test_results['summary'] = {
+            'strategy_count': len(test_results['strategies']),
+            'detected_attacks_total': sum(s['attacks_detected'] for s in test_results['strategies']),
+            'morphs_triggered_total': sum(s['morphs_triggered'] for s in test_results['strategies']),
+            'false_positives_total': sum(s['false_positives'] for s in test_results['strategies']),
+        }
         
         self.results['tests'].append(test_results)
     
@@ -529,6 +559,10 @@ class MTDBenchmark:
         time.sleep(2)
         
         # Save all results
+        self.results['summary'] = {
+            'tests_run': len(self.results['tests']),
+            'generated_at': datetime.now().isoformat(),
+        }
         filename = self._save_results()
         
         console.print(f"\n[bold green]✓ Complete benchmark suite finished![/bold green]")

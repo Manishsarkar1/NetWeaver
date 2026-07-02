@@ -38,6 +38,14 @@ class MorphingStrategyTests(unittest.TestCase):
         self.assertTrue(strategy.should_morph_packet_count("10.0.0.1", "10.0.0.2"))
         self.assertFalse(strategy.should_morph_packet_count("10.0.0.1", "10.0.0.2"))
 
+    def test_pair_key_is_order_independent(self):
+        strategy = MorphingStrategy()
+
+        self.assertEqual(
+            strategy._pair_key("10.0.0.1", "10.0.0.2"),
+            strategy._pair_key("10.0.0.2", "10.0.0.1"),
+        )
+
 
 class ThreatDetectorTests(unittest.TestCase):
     def test_port_scan_detection_triggers_at_threshold(self):
@@ -67,6 +75,17 @@ class ThreatDetectorTests(unittest.TestCase):
         clock.advance(6)
         detector.detect_port_scan("1.1.1.1", "10.0.0.2", 80)
         self.assertEqual(len(detector.threats), 0)
+
+    def test_detect_port_scan_keeps_threat_history(self):
+        clock = FakeClock()
+        detector = ThreatDetector(time_fn=clock.now, debug_sink=lambda _: None)
+        detector.port_scan_threshold = 2
+
+        detector.detect_port_scan("1.1.1.1", "10.0.0.2", 22)
+        detector.detect_port_scan("1.1.1.1", "10.0.0.2", 80)
+
+        self.assertEqual(len(detector.threats), 1)
+        self.assertEqual(detector.threats[0].threat_type, "port_scan")
 
 
 if __name__ == "__main__":
